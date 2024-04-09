@@ -1,10 +1,11 @@
-package mdt.registry.service;
+package mdt.registry.controller;
 
 import java.nio.file.AccessDeniedException;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import jakarta.servlet.http.HttpServletRequest;
 import mdt.model.registry.RegistryExceptionEntity;
@@ -40,7 +41,8 @@ public class RegistryExceptionAdvice {
 	}
 
 	@ExceptionHandler({AccessDeniedException.class})
-	public ResponseEntity<RegistryExceptionEntity> exceptionHandler(HttpServletRequest request, AccessDeniedException e) {
+	public ResponseEntity<RegistryExceptionEntity> exceptionHandler(HttpServletRequest request,
+																	AccessDeniedException e) {
 		return ResponseEntity
 				.status(StatusCode.ClientMethodNotAllowed.getStatus())
 				.body(RegistryExceptionEntity.from(e));

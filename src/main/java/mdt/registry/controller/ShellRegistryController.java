@@ -5,6 +5,9 @@ import java.util.List;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.DeserializationException;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.SerializationException;
 import org.eclipse.digitaltwin.aas4j.v3.model.AssetAdministrationShellDescriptor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -18,7 +21,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import mdt.registry.service.CachingFileMDTAASRegistry;
+import mdt.MDTController;
+import mdt.registry.model.CachingFileMDTAASRegistry;
 
 
 /**
@@ -27,9 +31,19 @@ import mdt.registry.service.CachingFileMDTAASRegistry;
 */
 @RestController
 @RequestMapping("/registry/shell-descriptors")
-public class ShellRegistryController extends DescriptorRegistryController<AssetAdministrationShellDescriptor> {
+public class ShellRegistryController extends MDTController<AssetAdministrationShellDescriptor>
+										implements InitializingBean {
+	private final Logger s_logger = LoggerFactory.getLogger(ShellRegistryController.class);
+	
     @Autowired
     CachingFileMDTAASRegistry m_registry;
+
+	@Override
+	public void afterPropertiesSet() throws Exception {
+		if ( s_logger.isInfoEnabled() ) {
+			s_logger.info("set AAS Registry store: {}", m_registry.getStoreDir().getAbsolutePath());
+		}
+	}
 
     @GetMapping({"", "/"})
     @ResponseStatus(HttpStatus.OK)
@@ -68,7 +82,7 @@ public class ShellRegistryController extends DescriptorRegistryController<AssetA
 		m_registry.removeAssetAdministrationShellDescriptorById(aasId);
     }
 
-    @PutMapping({"", "/"})
+    @PutMapping({""})
     @ResponseStatus(HttpStatus.CREATED)
     public String updateAssetAdministrationShellDescriptor(@RequestBody String aasJson)
     	throws SerializationException, DeserializationException {

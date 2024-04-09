@@ -1,4 +1,4 @@
-package mdt.registry.controller;
+package mdt;
 
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -12,15 +12,14 @@ import org.eclipse.digitaltwin.aas4j.v3.dataformat.json.JsonSerializer;
 
 import mdt.model.registry.MessageTypeEnum;
 import mdt.model.registry.RegistryExceptionEntity;
-import mdt.registry.service.ResponsePayload;
-import mdt.registry.service.StatusCode;
+import mdt.registry.controller.StatusCode;
 
 
 /**
 *
 * @author Kang-Woo Lee (ETRI)
 */
-public class DescriptorRegistryController<T> {
+public class MDTController<T> {
 	protected static final JsonSerializer s_ser = new JsonSerializer();
 	protected static final JsonDeserializer s_deser = new JsonDeserializer();
 	

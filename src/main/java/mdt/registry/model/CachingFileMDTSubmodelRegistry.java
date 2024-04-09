@@ -1,4 +1,4 @@
-package mdt.registry.service;
+package mdt.registry.model;
 
 import java.io.File;
 import java.util.List;
@@ -17,9 +17,12 @@ import mdt.model.registry.SubmodelRegistry;
 public class CachingFileMDTSubmodelRegistry implements SubmodelRegistry {
     private final CachingFileBasedRegistry<SubmodelDescriptor> m_store;
     
-    public CachingFileMDTSubmodelRegistry(String storeDirPath, int cacheSize) throws RegistryException {
-    	File storeDir = new File(storeDirPath);
+    public CachingFileMDTSubmodelRegistry(File storeDir, int cacheSize) throws RegistryException {
     	m_store = new CachingFileBasedRegistry<>(storeDir, cacheSize, SubmodelDescriptor.class);
+    }
+    
+    public File getStoreDir() {
+    	return m_store.getStoreDir();
     }
 
 	@Override

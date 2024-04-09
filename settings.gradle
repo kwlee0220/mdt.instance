@@ -3,5 +3,5 @@ rootProject.name = 'mdt.registry'
 include ":utils"
 project(':utils').projectDir = file('../../common/utils')
 
-include ":mdt.common"
-project(':mdt.common').projectDir = file('../mdt.common')
+include ":mdt.client"
+project(':mdt.client').projectDir = file('../mdt.client')

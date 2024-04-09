@@ -1,4 +1,4 @@
-package mdt.registry.service;
+package mdt.registry.model;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -70,6 +70,10 @@ public class CachingFileBasedRegistry<T> {
 		catch ( IOException e ) {
 			throw new RegistryException("" + e);
 		}
+	}
+	
+	public File getStoreDir() {
+		return m_store.getRootDir();
 	}
 
     public List<String> getAllDescriptorIds() throws RegistryException {

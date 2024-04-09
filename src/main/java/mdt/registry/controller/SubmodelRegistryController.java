@@ -5,6 +5,9 @@ import java.util.List;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.DeserializationException;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.SerializationException;
 import org.eclipse.digitaltwin.aas4j.v3.model.SubmodelDescriptor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -18,7 +21,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import mdt.registry.service.CachingFileMDTSubmodelRegistry;
+import mdt.MDTController;
+import mdt.registry.model.CachingFileMDTSubmodelRegistry;
 
 
 /**
@@ -27,9 +31,19 @@ import mdt.registry.service.CachingFileMDTSubmodelRegistry;
 */
 @RestController
 @RequestMapping("/registry/submodel-descriptors")
-public class SubmodelRegistryController extends DescriptorRegistryController<SubmodelDescriptor> {
+public class SubmodelRegistryController extends MDTController<SubmodelDescriptor>
+											implements InitializingBean {
+	private final Logger s_logger = LoggerFactory.getLogger(SubmodelRegistryController.class);
+	
     @Autowired
     CachingFileMDTSubmodelRegistry m_registry;
+
+	@Override
+	public void afterPropertiesSet() throws Exception {
+		if ( s_logger.isInfoEnabled() ) {
+			s_logger.info("set Submodel Registry store: {}", m_registry.getStoreDir().getAbsolutePath());
+		}
+	}
 
     @GetMapping({"", "/"})
     @ResponseStatus(HttpStatus.OK)

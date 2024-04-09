@@ -1,4 +1,4 @@
-package mdt.registry.service;
+package mdt.registry.controller;
 
 import org.springframework.http.HttpStatus;
 

@@ -1,0 +1,29 @@
+spring:
+   application:
+      name: mdt.registry
+      
+server:
+   port: 12985
+   error:
+      include-message: always
+
+logging:
+   pattern:
+      console: "[FB] %d{yyyy-MM-dd HH:mm:ss} | %-5level | %-40.40logger{39} | %msg%n"
+
+jdbc:
+   system: postgresql
+   host: localhost
+   port: 5432
+   user: mdt
+   password: Mdt2024^^
+   database: mdt
+   
+registry:
+   workspace_dir: registry_store
+   cache_size:
+      aas: 32
+      submodel: 256
+      
+executor:
+   endpoint: http://localhost:12986

@@ -1,4 +1,4 @@
-package mdt.registry.service;
+package mdt.registry.model;
 
 import java.io.File;
 import java.util.List;
@@ -18,9 +18,13 @@ import mdt.model.registry.ResourceNotFoundException;
 public class CachingFileMDTAASRegistry implements AssetAdministrationShellRegistry {
     private final CachingFileBasedRegistry<AssetAdministrationShellDescriptor> m_store;
     
-    public CachingFileMDTAASRegistry(String storeDirPath, int cacheSize) throws RegistryException {
-		File storeDir = new File(storeDirPath);
-		m_store = new CachingFileBasedRegistry<>(storeDir, cacheSize, AssetAdministrationShellDescriptor.class);
+    public CachingFileMDTAASRegistry(File storeDir, int cacheSize) throws RegistryException {
+		m_store = new CachingFileBasedRegistry<>(storeDir, cacheSize,
+												AssetAdministrationShellDescriptor.class);
+    }
+    
+    public File getStoreDir() {
+    	return m_store.getStoreDir();
     }
 
 	@Override
