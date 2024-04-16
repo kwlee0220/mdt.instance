@@ -1,4 +1,4 @@
-rootProject.name = 'mdt.registry'
+rootProject.name = 'mdt.instance'
 
 include ":utils"
 project(':utils').projectDir = file('../../common/utils')

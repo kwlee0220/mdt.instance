@@ -10,9 +10,9 @@ import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.SerializationException;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.json.JsonDeserializer;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.json.JsonSerializer;
 
+import mdt.controller.StatusCode;
 import mdt.model.registry.MessageTypeEnum;
 import mdt.model.registry.RegistryExceptionEntity;
-import mdt.registry.controller.StatusCode;
 
 
 /**

@@ -1,6 +1,10 @@
 spring:
    application:
       name: mdt.registry
+   servlet:
+      multipart:
+         maxFileSize: 200MB
+         maxRequestSize: 200MB
       
 server:
    port: 12985
@@ -13,22 +17,24 @@ logging:
    pattern:
       console: "%d{yyyy-MM-dd HH:mm:ss} | %-5level | %-40.40logger{39} | %msg%n"
 
-jdbc:
-   system: postgresql
-   host: 192.168.0.7
-   port: 5432
-   user: mdt
-   password: Mdt2024^^
-   database: mdt
-   
-registry:
-   workspace_dir: C:/development/mdt/mdt.registry/registry_store
-   cache_size:
-      aas: 32
-      submodel: 256
-      
-executor:
+
+repository:
+   aas:
+      workspaceDir: D:/Dropbox/Temp/mdt-registry/shells
+      cacheSize: 32
+   submodel:
+      workspaceDir: D:/Dropbox/Temp/mdt-registry/submodels
+      cacheSize: 256
+
+instance-manager:
+   type: docker
    repositoryEndpointFormat: https://192.168.0.7:%d/api/v3.0
-   workspaceDir: D:/Dropbox/Temp/fa3st-repository
-   sampleInterval: 3s
-   timeout: 1m
+   workspaceDir: D:/Dropbox/Temp/mdt-instances
+   
+   executor:
+      workspaceDir: ${instance-manager.workspaceDir}
+      sampleInterval: 3s
+      startTimeout: 1m
+      
+   docker:
+      dockerHost: http://localhost:2375
