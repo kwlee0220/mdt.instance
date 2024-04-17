@@ -25,13 +25,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-import utils.stream.FStream;
-
-import mdt.instance.AbstractMDTInstanceManager;
 import mdt.instance.AbstractMDTInstanceManagerBuilder;
-import mdt.instance.InstanceDescriptor;
+import mdt.instance.FileBasedInstanceManager;
 import mdt.model.instance.DockerExecutionArguments;
-import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.registry.ResourceAlreadyExistsException;
 
@@ -40,7 +36,7 @@ import mdt.model.registry.ResourceAlreadyExistsException;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class DockerInstanceManager extends AbstractMDTInstanceManager {
+public class DockerInstanceManager extends FileBasedInstanceManager<DockerInstanceDescriptor> {
 	private static final Logger s_logger = LoggerFactory.getLogger(DockerInstanceManager.class);
 	@SuppressWarnings("unused")
 	private static final String FA3ST_IMAGE_PATH = "mdt/faaast-service";
@@ -62,72 +58,6 @@ public class DockerInstanceManager extends AbstractMDTInstanceManager {
 	DockerClient newDockerClient() {
 		return new JerseyDockerClientBuilder().uri(m_dockerHost).build();
 	}
-
-//	@Override
-//	public List<MDTInstance> getInstanceAll() throws MDTInstanceManagerException {
-//		try ( DockerClient docker = newDockerClient() ) {
-//			List<Container> containers = docker.listContainers(ListContainersParam.withLabel("mdt-aas-id"));
-//			return FStream.from(containers)
-//							.map(this::toInstance)
-//							.cast(MDTInstance.class)
-//							.toList();
-//		}
-//		catch ( DockerException e ) {
-//			e.printStackTrace();
-//		}
-//		catch ( InterruptedException e ) {
-//			e.printStackTrace();
-//		}
-//		return null;
-//	}
-
-//	@Override
-//	public DockerInstance getInstance(String id) throws MDTInstanceManagerException {
-//		try ( DockerClient docker = newDockerClient() ) {
-//			Container container = findContainerByInstanceId(docker, id);
-//			return toInstance(container);
-//		}
-//		catch ( ContainerNotFoundException e ) {
-//			throw new ResourceNotFoundException("DockerInstance: id=" + id);
-//		}
-//		catch ( DockerException | InterruptedException e ) {
-//			throw new MDTInstanceManagerException("Failed to get MDTInstance: id=" + id);
-//		}
-//	}
-
-//	@Override
-//	public DockerInstance getInstanceByAasId(String aasId) throws ResourceNotFoundException {
-//		try ( DockerClient docker = newDockerClient() ) {
-//			List<Container> containers = docker.listContainers(ListContainersParam.withLabel("mdt-aas-id", aasId));
-//			if ( containers.size() == 0 ) {
-//				throw new ContainerNotFoundException("aas-id=" + aasId);
-//			}
-//			else if ( containers.size() == 1 ) {
-//				return toInstance(containers.get(0));
-//			}
-//			else {
-//				throw new MDTInstanceManagerException("Duplicate DockerInstances: aas-id=" + aasId);
-//			}
-//		}
-//		catch ( DockerException | InterruptedException e ) {
-//			throw new MDTInstanceManagerException("Failed to get MDTInstance: aas-id=" + aasId);
-//		}
-//	}
-
-//	@Override
-//	public List<MDTInstance> getInstanceAllByIdShort(String aasIdShort) throws MDTInstanceManagerException {
-//		try ( DockerClient docker = newDockerClient() ) {
-//			List<Container> containers
-//					= docker.listContainers(ListContainersParam.withLabel("mdt-aas-id-short", aasIdShort));
-//			return FStream.from(containers)
-//							.map(this::toInstance)
-//							.cast(MDTInstance.class)
-//							.toList();
-//		}
-//		catch ( DockerException | InterruptedException e ) {
-//			throw new MDTInstanceManagerException("Failed to get MDTInstance: aas-id-short=" + aasIdShort);
-//		}
-//	}
 	
 	@Override
 	protected DockerInstanceDescriptor buildDescriptor(String id, AssetAdministrationShell aas,
@@ -151,6 +81,7 @@ public class DockerInstanceManager extends AbstractMDTInstanceManager {
 		}
 	}
 
+	@SuppressWarnings("unused")
 	private Container findContainerByInstanceId(DockerClient docker, String instanceId)
 		throws DockerException, InterruptedException, ContainerNotFoundException {
 		List<Container> containers = docker.listContainers(ListContainersParam.allContainers(),
@@ -165,7 +96,8 @@ public class DockerInstanceManager extends AbstractMDTInstanceManager {
 			throw new MDTInstanceManagerException("Duplicate DockerInstances: id=" + instanceId);
 		}
 	}
-	
+
+	@SuppressWarnings("unused")
 	private DockerInstance toInstance(Container container) throws MDTInstanceManagerException {
 		String id = container.names().get(0).substring(1);
 		
@@ -185,7 +117,7 @@ public class DockerInstanceManager extends AbstractMDTInstanceManager {
 	}
 	
 	@Override
-	protected DockerInstance toInstance(InstanceDescriptor descriptor) {
+	protected DockerInstance toInstance(DockerInstanceDescriptor descriptor) {
 		if ( descriptor instanceof DockerInstanceDescriptor ddesc ) {
 			return new DockerInstance(this, ddesc);
 		}
@@ -195,8 +127,7 @@ public class DockerInstanceManager extends AbstractMDTInstanceManager {
 	}
 	
 	@Override
-	protected DockerInstanceDescriptor buildInstance(AbstractMDTInstanceManager manager, File instanceDir,
-													InstanceDescriptor desc) {
+	protected DockerInstanceDescriptor buildInstance(File instanceDir, DockerInstanceDescriptor desc) {
 		Preconditions.checkArgument(desc instanceof DockerInstanceDescriptor);
 		
 		DockerInstanceDescriptor ddesc = (DockerInstanceDescriptor)desc;

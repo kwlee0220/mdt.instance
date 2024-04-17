@@ -32,7 +32,8 @@ import utils.func.Unchecked;
 import utils.io.IOUtils;
 
 import mdt.MDTController;
-import mdt.instance.AbstractMDTInstanceManager;
+import mdt.instance.FileBasedInstanceManager;
+import mdt.instance.InstanceDescriptor;
 import mdt.instance.docker.DockerInstanceManager;
 import mdt.instance.jar.JarInstanceManager;
 import mdt.model.instance.DockerExecutionArguments;
@@ -52,7 +53,7 @@ import mdt.model.instance.MDTInstanceStatus;
 public class MDTInstanceManagerController extends MDTController<MDTInstance> implements InitializingBean {
 	private final Logger s_logger = LoggerFactory.getLogger(MDTInstanceManagerController.class);
 	
-	@Autowired AbstractMDTInstanceManager m_instance_manager;	
+	@Autowired FileBasedInstanceManager<? extends InstanceDescriptor> m_instance_manager;	
 	@Value("file:${instance-manager.workspaceDir}")
 	private File m_workspaceDir;
 
@@ -184,7 +185,7 @@ public class MDTInstanceManagerController extends MDTController<MDTInstance> imp
     	List<String> instanceIdList = null;
 		try {
 			instanceIdList = m_instance_manager.getInstanceAll().stream()
-										.map(MDTInstance::getId)
+										.map(inst -> inst.getId())
 										.collect(Collectors.toList());
 			m_instance_manager.removeInstanceAll();
 		}

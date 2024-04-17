@@ -19,16 +19,16 @@ import mdt.model.repository.SubmodelRepository;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public abstract class AbstractMDTInstance implements MDTInstance {
+public abstract class FileBasedInstance<D extends InstanceDescriptor> implements MDTInstance {
 	@SuppressWarnings("unused")
-	private static final Logger s_logger = LoggerFactory.getLogger(AbstractMDTInstance.class);
+	private static final Logger s_logger = LoggerFactory.getLogger(FileBasedInstance.class);
 	
-	protected final AbstractMDTInstanceManager m_manager;
-	protected final InstanceDescriptor m_desc;
+	protected final FileBasedInstanceManager<D> m_manager;
+	protected final D m_desc;
 	
 	protected abstract void remove();
 	
-	protected AbstractMDTInstance(AbstractMDTInstanceManager manager, InstanceDescriptor desc) {
+	protected FileBasedInstance(FileBasedInstanceManager<D> manager, D desc) {
 		m_manager = manager;
 		m_desc = desc;
 	}
@@ -73,6 +73,10 @@ public abstract class AbstractMDTInstance implements MDTInstance {
 									.getSubmodelRepository(url);
 	}
 	
+	protected D getInstanceDescriptor() {
+		return m_desc;
+	}
+	
 	@Override
 	public boolean equals(Object obj) {
 		if ( this == obj ) {
@@ -98,12 +102,7 @@ public abstract class AbstractMDTInstance implements MDTInstance {
 	}
 	
 	@SuppressWarnings("unchecked")
-	protected <T extends InstanceDescriptor> T getInstanceDescriptor() {
-		return (T)m_desc;
-	}
-	
-	@SuppressWarnings("unchecked")
-	protected <T extends AbstractMDTInstanceManager> T getInstanceManager() {
+	protected <T extends FileBasedInstanceManager<D>> T getInstanceManager() {
 		return (T)m_manager;
 	}
 }

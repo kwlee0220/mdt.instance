@@ -12,9 +12,8 @@ import com.google.common.io.Files;
 
 import mdt.exector.jar.JarExecutionListener;
 import mdt.exector.jar.JarInstanceExecutor;
-import mdt.instance.AbstractMDTInstanceManager;
 import mdt.instance.AbstractMDTInstanceManagerBuilder;
-import mdt.instance.InstanceDescriptor;
+import mdt.instance.FileBasedInstanceManager;
 import mdt.model.instance.JarExecutionArguments;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
@@ -24,7 +23,7 @@ import mdt.model.instance.MDTInstanceStatus;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class JarInstanceManager extends AbstractMDTInstanceManager {
+public class JarInstanceManager extends FileBasedInstanceManager<JarInstanceDescriptor> {
 	private static final Logger s_logger = LoggerFactory.getLogger(JarInstanceManager.class);
 	
 	private final JarInstanceExecutor m_executor;
@@ -66,7 +65,7 @@ public class JarInstanceManager extends AbstractMDTInstanceManager {
 	}
 	
 	@Override
-	protected JarInstance toInstance(InstanceDescriptor descriptor) {
+	protected JarInstance toInstance(JarInstanceDescriptor descriptor) {
 		if ( descriptor instanceof JarInstanceDescriptor jdesc ) {
 			return new JarInstance(this, jdesc);
 		}
@@ -76,9 +75,7 @@ public class JarInstanceManager extends AbstractMDTInstanceManager {
 	}
 	
 	@Override
-	protected JarInstanceDescriptor
-	buildInstance(AbstractMDTInstanceManager manager, File instanceDir,
-					InstanceDescriptor descriptor) {
+	protected JarInstanceDescriptor buildInstance(File instanceDir, JarInstanceDescriptor descriptor) {
 		if ( descriptor instanceof JarInstanceDescriptor jdesc ) {
 			try {
 				File jarFile = new File(instanceDir, "fa3st-repository.jar");

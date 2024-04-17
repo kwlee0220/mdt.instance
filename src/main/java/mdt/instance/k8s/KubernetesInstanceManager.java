@@ -6,9 +6,8 @@ import org.eclipse.digitaltwin.aas4j.v3.model.AssetAdministrationShell;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import mdt.instance.AbstractMDTInstanceManager;
 import mdt.instance.AbstractMDTInstanceManagerBuilder;
-import mdt.instance.InstanceDescriptor;
+import mdt.instance.FileBasedInstanceManager;
 import mdt.model.instance.KubernetesExecutionArguments;
 import mdt.model.instance.MDTInstanceManagerException;
 
@@ -16,7 +15,7 @@ import mdt.model.instance.MDTInstanceManagerException;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class KubernetesInstanceManager extends AbstractMDTInstanceManager {
+public class KubernetesInstanceManager extends FileBasedInstanceManager<KubernetesInstanceDescriptor> {
 	private static final Logger s_logger = LoggerFactory.getLogger(KubernetesInstanceManager.class);
 	
 	private final KubernetesRemote m_k8s;
@@ -51,7 +50,7 @@ public class KubernetesInstanceManager extends AbstractMDTInstanceManager {
 	}
 	
 	@Override
-	protected KubernetesInstance toInstance(InstanceDescriptor descriptor) {
+	protected KubernetesInstance toInstance(KubernetesInstanceDescriptor descriptor) {
 		if ( descriptor instanceof KubernetesInstanceDescriptor jdesc ) {
 			return new KubernetesInstance(this, jdesc);
 		}
@@ -61,8 +60,7 @@ public class KubernetesInstanceManager extends AbstractMDTInstanceManager {
 	}
 	
 	@Override
-	protected KubernetesInstanceDescriptor buildInstance(AbstractMDTInstanceManager manager, File instanceDir,
-														InstanceDescriptor descriptor) {
+	protected KubernetesInstanceDescriptor buildInstance(File instanceDir, KubernetesInstanceDescriptor descriptor) {
 		if ( descriptor instanceof KubernetesInstanceDescriptor kdesc ) {
 			return kdesc;
 		}

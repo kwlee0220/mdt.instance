@@ -15,7 +15,7 @@ import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
-import mdt.instance.AbstractMDTInstance;
+import mdt.instance.FileBasedInstance;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
@@ -27,7 +27,7 @@ import mdt.model.registry.RegistryException;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class KubernetesInstance extends AbstractMDTInstance implements MDTInstance {
+public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDescriptor> implements MDTInstance {
 	public static final String NAMESPACE = "mdt-instance";
 	
 	private final KubernetesRemote m_kube;

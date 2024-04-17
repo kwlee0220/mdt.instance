@@ -12,7 +12,7 @@ import org.mandas.docker.client.messages.PortBinding;
 import com.google.common.base.Preconditions;
 
 import mdt.client.InternalException;
-import mdt.instance.AbstractMDTInstance;
+import mdt.instance.FileBasedInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
 import mdt.model.instance.StatusResult;
@@ -21,7 +21,7 @@ import mdt.model.instance.StatusResult;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class DockerInstance extends AbstractMDTInstance {
+public class DockerInstance extends FileBasedInstance<DockerInstanceDescriptor> {
 	@SuppressWarnings("unused")
 	private static final String FA3ST_IMAGE_PATH = "mdt/faaast-service";
 	private static final int SECONDS_TO_WAIT_BEFORE_KILLING = 30;

@@ -11,7 +11,7 @@ import mdt.model.registry.SubmodelRegistry;
  * @author Kang-Woo Lee (ETRI)
  */
 public abstract class AbstractMDTInstanceManagerBuilder<B extends MDTInstanceManagerBuilder<B,T>,
-															T extends MDTInstanceManagerProvider>
+														T extends MDTInstanceManagerProvider>
 																implements MDTInstanceManagerBuilder<B,T> {
 	protected ServiceFactory m_serviceFact;
 	protected AssetAdministrationShellRegistry m_aasRegistry;

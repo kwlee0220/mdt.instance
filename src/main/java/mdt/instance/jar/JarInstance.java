@@ -8,8 +8,7 @@ import com.google.common.base.Preconditions;
 import utils.func.Tuple;
 
 import mdt.exector.jar.JarInstanceExecutor;
-import mdt.instance.AbstractMDTInstance;
-import mdt.instance.InstanceDescriptor;
+import mdt.instance.FileBasedInstance;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
@@ -20,10 +19,10 @@ import mdt.model.instance.StatusResult;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class JarInstance extends AbstractMDTInstance implements MDTInstance {
+public class JarInstance extends FileBasedInstance<JarInstanceDescriptor> implements MDTInstance {
 	private static final Logger s_logger = LoggerFactory.getLogger(JarInstance.class);
 
-	JarInstance(JarInstanceManager manager, InstanceDescriptor desc) {
+	JarInstance(JarInstanceManager manager, JarInstanceDescriptor desc) {
 		super(manager, desc);
 		Preconditions.checkArgument(desc instanceof JarInstanceDescriptor);
 	}
