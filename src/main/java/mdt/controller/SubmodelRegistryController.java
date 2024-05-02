@@ -60,7 +60,7 @@ public class SubmodelRegistryController extends MDTController<SubmodelDescriptor
     public String getSubmodelDescriptorById(@PathVariable("submodelId") String submodelId)
     	throws SerializationException {
 		submodelId = decodeBase64(submodelId);
-		return s_ser.write(m_registry.getSubmodelDescriptorById(submodelId));
+		return m_registry.getJsonSubmodelDescriptorById(submodelId);
     }
 
     @PostMapping({"", "/"})

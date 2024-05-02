@@ -28,16 +28,19 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.google.common.base.Preconditions;
 
-import utils.func.Unchecked;
+import utils.func.Try;
 import utils.io.IOUtils;
+import utils.stream.FStream;
 
 import mdt.MDTController;
-import mdt.instance.FileBasedInstanceManager;
-import mdt.instance.InstanceDescriptor;
+import mdt.instance.AbstractInstanceManager;
+import mdt.instance.MDTInstanceProvider;
 import mdt.instance.docker.DockerInstanceManager;
 import mdt.instance.jar.JarInstanceManager;
+import mdt.instance.k8s.KubernetesInstanceManager;
 import mdt.model.instance.DockerExecutionArguments;
 import mdt.model.instance.JarExecutionArguments;
+import mdt.model.instance.KubernetesExecutionArguments;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstancePayload;
@@ -53,7 +56,7 @@ import mdt.model.instance.MDTInstanceStatus;
 public class MDTInstanceManagerController extends MDTController<MDTInstance> implements InitializingBean {
 	private final Logger s_logger = LoggerFactory.getLogger(MDTInstanceManagerController.class);
 	
-	@Autowired FileBasedInstanceManager<? extends InstanceDescriptor> m_instance_manager;	
+	@Autowired AbstractInstanceManager m_instance_manager;	
 	@Value("file:${instance-manager.workspaceDir}")
 	private File m_workspaceDir;
 
@@ -68,99 +71,133 @@ public class MDTInstanceManagerController extends MDTController<MDTInstance> imp
 
     @GetMapping("/id/{id}")
     @ResponseStatus(HttpStatus.OK)
-    public MDTInstancePayload getMDTInstance(@PathVariable("id") String id) throws SerializationException {
-    	return toPayload(m_instance_manager.getInstance(id));
+    public MDTInstancePayload getMDTInstance(@PathVariable("id") String id) throws Exception {
+    	return toPayloadAndClose(m_instance_manager.getInstance(id));
     }
 
     @GetMapping("/aasId/{aasId}")
     @ResponseStatus(HttpStatus.OK)
-    public MDTInstancePayload getMDTInstanceByAasId(@PathVariable("aasId") String aasId)
-    	throws SerializationException {
+    public MDTInstancePayload getMDTInstanceByAasId(@PathVariable("aasId") String aasId) throws Exception {
     	String decoded = decodeBase64(aasId);
-		return toPayload(m_instance_manager.getInstanceByAasId(decoded));
+		return toPayloadAndClose(m_instance_manager.getInstanceByAasId(decoded));
     }
 
     @GetMapping({"/aasIdShort/{aasIdShort}"})
     @ResponseStatus(HttpStatus.OK)
     public List<MDTInstancePayload> getAllMDTInstancesByAasIdShort(@PathVariable("aasIdShort") String aasIdShort)
     	throws MDTInstanceManagerException, SerializationException {
-		return m_instance_manager.getInstanceAllByIdShort(aasIdShort).stream()
-							.map(this::toPayload)
-							.collect(Collectors.toList());
+    	return FStream.from(m_instance_manager.getInstanceAllByIdShort(aasIdShort))
+    					.map(this::toPayloadAndClose)
+    					.toList();
     }
     
     @GetMapping({"/all"})
     @ResponseStatus(HttpStatus.OK)
-    public List<MDTInstancePayload> getAllMDTInstaces()
-    	throws MDTInstanceManagerException, SerializationException {
-    	List<MDTInstance> instances = m_instance_manager.getInstanceAll();
-		return instances.stream()
-						.map(this::toPayload)
-						.collect(Collectors.toList());
+    public List<MDTInstancePayload> getAllMDTInstaces() throws MDTInstanceManagerException, SerializationException {
+		return m_instance_manager.getInstanceAll().stream()
+								.map(this::toPayloadAndClose)
+								.collect(Collectors.toList());
     }
     
     @PutMapping({"/status"})
     @ResponseStatus(HttpStatus.OK)
     public List<MDTInstancePayload> getAllMDTInstacesOfStatus(@RequestBody MDTInstanceStatus status)
     	throws MDTInstanceManagerException, SerializationException {
-    	List<MDTInstance> instances = m_instance_manager.getAllInstancesOfStatus(status);
-		return instances.stream()
-						.map(this::toPayload)
-						.collect(Collectors.toList());
+		return m_instance_manager.getAllInstancesOfStatus(status).stream()
+								.map(this::toPayloadAndClose)
+								.collect(Collectors.toList());
     }
 
-    @PostMapping({"/jar"})
+    @PostMapping({""})
     @ResponseStatus(HttpStatus.CREATED)
-    public MDTInstancePayload addJarInstance(@RequestParam("id") String id,
-				    							@RequestParam("jar") MultipartFile mpfJar,
-				    							@RequestParam("model") MultipartFile mpfModel,
-				    							@RequestParam("conf") MultipartFile mpfConf) {
-    	Preconditions.checkState(m_instance_manager instanceof JarInstanceManager,
-									"Incompatible MDTInstanceManager: Not JarInstanceManager");
-    	
-    	File topDir = new File(m_workspaceDir, id);
-    	try {
-			Files.createDirectories(topDir.toPath());
+    public MDTInstancePayload addInstance(@RequestParam("id") String id,
+										@RequestParam(name="jar", required=false) MultipartFile mpfJar,
+		    							@RequestParam(name="imageId", required=false) String imageId,
+		    							@RequestParam(name="initialModel", required=false) MultipartFile mpfModel,
+		    							@RequestParam(name="instanceConf", required=false) MultipartFile mpfConf) {
+    	if ( m_instance_manager instanceof JarInstanceManager ) {
+        	Preconditions.checkNotNull(mpfJar, "Jar file was null");
+        	return addJarInstance(id, mpfJar, mpfModel, mpfConf);
+    	}
+    	else if ( m_instance_manager instanceof DockerInstanceManager ) {
+        	Preconditions.checkNotNull(imageId, "ImageId was null");
+        	return addDockerInstance(id, imageId, mpfModel, mpfConf);
+    	}
+    	else if ( m_instance_manager instanceof KubernetesInstanceManager ) {
+        	Preconditions.checkNotNull(imageId, "ImageId was null");
+        	return addKubernetesInstance(id, imageId, mpfModel);
+    	}
+    	else {
+			throw new MDTInstanceManagerException("Unknown InstanceManager type: " + m_instance_manager);
+    	}
+    }
 
-			File jarFile = uploadFile(topDir, "fa3st-repository.jar", mpfJar);
-			File modelFile = uploadFile(topDir, "model.json", mpfModel);
-			File confFile = uploadFile(topDir, "conf.json", mpfConf);
+    private MDTInstancePayload addJarInstance(String id, MultipartFile mpfJar, MultipartFile mpfModel,
+    											MultipartFile mpfConf) {
+    	JarInstanceManager instMgr = (JarInstanceManager)m_instance_manager;
+    	
+    	File instDir = instMgr.getInstanceWorkspaceDir(id);
+    	try {
+			Files.createDirectories(instDir.toPath());
+
+			File jarFile = uploadFile(instDir, "fa3st-repository.jar", mpfJar);
+			File modelFile = uploadFile(instDir, "model.json", mpfModel);
+			File confFile = uploadFile(instDir, "conf.json", mpfConf);
 			
 			JarExecutionArguments args = JarExecutionArguments.builder()
-																.jarFile(jarFile.getAbsolutePath())
-																.modelFile(modelFile.getAbsolutePath())
-																.configFile(confFile.getAbsolutePath())
-																.build();
-	    	MDTInstance instance = m_instance_manager.addInstance(id, modelFile, args);
-	    	return toPayload(instance);
+															.jarFile(jarFile.getAbsolutePath())
+															.modelFile(modelFile.getAbsolutePath())
+															.configFile(confFile.getAbsolutePath())
+															.build();
+			String argsJson = instMgr.toExecutionArgumentsString(args);
+	    	MDTInstance instance = instMgr.addInstance(id, modelFile, argsJson);
+	    	return toPayloadAndClose(instance);
 		}
 		catch ( IOException e ) {
 			throw new MDTInstanceManagerException("" + e);
 		}
     }
 
-    @PostMapping({"/docker"})
-    @ResponseStatus(HttpStatus.CREATED)
-    public MDTInstancePayload addDockerInstance(@RequestParam("id") String id,
-		    							@RequestParam("imageId") String imageId,
-		    							@RequestParam("model") MultipartFile mpfModel,
-		    							@RequestParam(name="conf", required=false) MultipartFile mpfConf) {
-    	Preconditions.checkState(m_instance_manager instanceof DockerInstanceManager,
-    							"Incompatible MDTInstanceManager: Not DockerInstanceManager");
+    private MDTInstancePayload addDockerInstance(String id, String imageId, MultipartFile mpfModel,
+    											MultipartFile mpfConf) {
+    	DockerInstanceManager instMgr = (DockerInstanceManager)m_instance_manager;
     	
-    	File topDir = new File(m_workspaceDir, id);
+    	File instDir = instMgr.getInstanceWorkspaceDir(id);
     	try {
-			Files.createDirectories(topDir.toPath());
+			Files.createDirectories(instDir.toPath());
 
-			File modelFile = uploadFile(topDir, "model.json", mpfModel);
-//			File confFile = (mpfConf != null) ? uploadFile(topDir, "conf.json", mpfConf) : null;
+			File modelFile = uploadFile(instDir, "model.json", mpfModel);
+			File confFile = uploadFile(instDir, "conf.json", mpfConf);
 			
 			DockerExecutionArguments args = DockerExecutionArguments.builder()
 																.imageId(imageId)
 																.modelFile(modelFile.getAbsolutePath())
+																.configFile(confFile.getAbsolutePath())
 																.build();
-	    	MDTInstance instance = m_instance_manager.addInstance(id, modelFile, args);
-	    	return toPayload(instance);
+			String argsJson = instMgr.toExecutionArgumentsString(args);
+	    	MDTInstance instance = instMgr.addInstance(id, modelFile, argsJson);
+	    	return toPayloadAndClose(instance);
+		}
+		catch ( IOException e ) {
+			throw new MDTInstanceManagerException("" + e);
+		}
+    }
+
+    private MDTInstancePayload addKubernetesInstance(String id, String imageId,  MultipartFile mpfModel) {
+    	KubernetesInstanceManager instMgr = (KubernetesInstanceManager)m_instance_manager;
+
+    	File instDir = instMgr.getInstanceWorkspaceDir(id);
+    	try {
+			Files.createDirectories(instDir.toPath());
+			
+			File modelFile = uploadFile(instDir, "model.json", mpfModel);
+
+			KubernetesExecutionArguments args = KubernetesExecutionArguments.builder()
+																			.imageId(imageId)
+																			.build();
+			String argsJson = instMgr.toExecutionArgumentsString(args);
+			MDTInstanceProvider instance = instMgr.addInstance(id, modelFile, argsJson);
+	    	return toPayloadAndClose(instance);
 		}
 		catch ( IOException e ) {
 			throw new MDTInstanceManagerException("" + e);
@@ -182,25 +219,19 @@ public class MDTInstanceManagerController extends MDTController<MDTInstance> imp
     @DeleteMapping("")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void removeAllMDTInstance() throws SerializationException {
-    	List<String> instanceIdList = null;
-		try {
-			instanceIdList = m_instance_manager.getInstanceAll().stream()
-										.map(inst -> inst.getId())
-										.collect(Collectors.toList());
-			m_instance_manager.removeInstanceAll();
-		}
-		finally {
-			for ( String id: instanceIdList ) {
-		    	File topDir = new File(m_workspaceDir, id);
-				Unchecked.runOrIgnore(() -> FileSystemUtils.deleteRecursively(topDir));
-			}
-		}
+    	Try.run(m_instance_manager::removeInstanceAll);
     }
     
     private File uploadFile(File topDir, String fileName, MultipartFile mpf) throws IOException {
 		File file = new File(topDir, fileName);
 		IOUtils.toFile(mpf.getInputStream(), file);
 		return file;
+    }
+    
+    private MDTInstancePayload toPayloadAndClose(MDTInstance instance) {
+    	MDTInstancePayload payload = toPayload(instance);
+    	IOUtils.closeQuietly(instance);
+    	return payload;
     }
     
     private MDTInstancePayload toPayload(MDTInstance instance) {

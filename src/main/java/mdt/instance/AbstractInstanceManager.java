@@ -5,7 +5,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import org.apache.commons.io.FileUtils;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.DeserializationException;
 import org.eclipse.digitaltwin.aas4j.v3.dataformat.json.JsonDeserializer;
 import org.eclipse.digitaltwin.aas4j.v3.model.AssetAdministrationShell;
@@ -23,76 +23,89 @@ import org.eclipse.digitaltwin.aas4j.v3.model.Reference;
 import org.eclipse.digitaltwin.aas4j.v3.model.Submodel;
 import org.eclipse.digitaltwin.aas4j.v3.model.SubmodelDescriptor;
 import org.eclipse.digitaltwin.aas4j.v3.model.impl.DefaultSubmodelDescriptor;
+import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttClientPersistence;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.eclipse.paho.client.mqttv3.MqttException;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.FileSystemUtils;
 
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.eventbus.Subscribe;
 
 import utils.LoggerSettable;
 import utils.func.Try;
 import utils.stream.FStream;
 
+import mdt.Globals;
 import mdt.client.Utils;
 import mdt.client.registry.RegistryModelConverter;
 import mdt.model.ServiceFactory;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
-import mdt.model.instance.StatusResult;
 import mdt.model.registry.AssetAdministrationShellRegistry;
 import mdt.model.registry.ResourceAlreadyExistsException;
 import mdt.model.registry.ResourceNotFoundException;
 import mdt.model.registry.SubmodelRegistry;
 
-
 /**
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
-													implements MDTInstanceManagerProvider, LoggerSettable {
-	private static final Logger s_logger = LoggerFactory.getLogger(FileBasedInstanceManager.class);
+public abstract class AbstractInstanceManager implements MDTInstanceManagerProvider, LoggerSettable {
+	private static final Logger s_logger = LoggerFactory.getLogger(AbstractInstanceManager.class);
 	
-	private static final String DESCRIPTOR_FILE_NAME = "descriptor.json";
-	
-	private ServiceFactory m_serviceFact;
-	private AssetAdministrationShellRegistry m_aasRegistry;
-	private SubmodelRegistry m_submodelRegistry;
-	private String m_repositoryEndpointFormat;
-	private File m_workspaceDir;
-	protected final JsonMapper m_mapper;
+	private final ServiceFactory m_serviceFact;
+	private final AssetAdministrationShellRegistry m_aasRegistry;
+	private final SubmodelRegistry m_submodelRegistry;
+	private final String m_repositoryEndpointFormat;
+	private final File m_workspaceDir;
+	private final InstanceDescriptorManager m_descriptorManager;
 	private Logger m_logger;
+	protected final ReadWriteLock m_rwLock = new ReentrantReadWriteLock();
+	private final MqttClient m_mqttClient;
 	
-	private final ReadWriteLock m_rwLock = new ReentrantReadWriteLock();
-
-	abstract protected D buildDescriptor(String id, AssetAdministrationShell aas, Object arguments)
+	abstract protected InstanceDescriptor initializeInstance(InstanceDescriptor desc);
+	abstract protected AbstractInstance toInstance(InstanceDescriptor descriptor)
 		throws MDTInstanceManagerException;
-	abstract protected D readDescriptor(File descFile) throws MDTInstanceManagerException;
-	abstract protected FileBasedInstance<D> toInstance(D descriptor) throws MDTInstanceManagerException;
-	abstract protected D buildInstance(File instanceDir, D descriptor) throws MDTInstanceManagerException;
 	
-	public FileBasedInstanceManager(MDTInstanceManagerBuilder<?,?> builder) {
+	protected AbstractInstanceManager(MDTInstanceManagerBuilder<?,?> builder) throws MDTInstanceManagerException {
 		m_serviceFact = builder.serviceFactory();
 		m_aasRegistry = builder.aasRegistry();
 		m_submodelRegistry = builder.submodeRegistry();
-		m_repositoryEndpointFormat = builder.repositoryEndpointFormat();
 		m_workspaceDir = builder.workspaceDir();
+		m_descriptorManager = builder.instanceDescriptorManager();
 		
-		m_mapper = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
-		
-		if ( m_repositoryEndpointFormat == null ) {
+		String epFormat = builder.repositoryEndpointFormat();
+		if ( epFormat == null ) {
 			try {
 				String host = InetAddress.getLocalHost().getHostAddress();
-				this.m_repositoryEndpointFormat = "https:" + host + ":%d/api/v3.0";
+				epFormat = "https:" + host + ":%d/api/v3.0";
 			}
 			catch ( UnknownHostException e ) {
 				throw new MDTInstanceManagerException("" + e);
 			}
 		}
-		m_logger = s_logger;
+		m_repositoryEndpointFormat = epFormat;
+		
+		try {
+			MqttClientPersistence persist = new MemoryPersistence();
+			m_mqttClient = new MqttClient("tcp://localhost:1883", "MDTInstanceManager", persist);
+			m_mqttClient.connect();
+			
+			Globals.EVENT_BUS.register(this);
+		}
+		catch ( MqttException e ) {
+			throw new MDTInstanceManagerException("Failed to initialize MQTT client, cause=" + e);
+		}
+		
+		setLogger(s_logger);
 	}
 
 	public ServiceFactory getServiceFactory() {
@@ -109,11 +122,35 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 		return m_submodelRegistry;
 	}
 	
+	public File getWorkspaceDir() {
+		return m_workspaceDir;
+	}
+	
+	public File getInstanceWorkspaceDir(String id) {
+		return new File(m_workspaceDir, id);
+	}
+
 	@Override
-	public FileBasedInstance<D> getInstance(String id) throws ResourceNotFoundException {
+	public AbstractInstance getInstance(String id) throws ResourceNotFoundException {
+		Preconditions.checkNotNull(id);
+		
 		m_rwLock.readLock().lock();
 		try {
-			D desc = readDescriptor(id);
+			InstanceDescriptor descriptor = m_descriptorManager.getInstanceDescriptor(id);
+			return toInstance(descriptor);
+		}
+		finally {
+			m_rwLock.readLock().unlock();
+		}
+	}
+
+	@Override
+	public AbstractInstance getInstanceByAasId(String aasId) throws ResourceNotFoundException {
+		Preconditions.checkNotNull(aasId);
+
+		m_rwLock.readLock().lock();
+		try {
+			InstanceDescriptor desc = m_descriptorManager.getInstanceDescriptorByAasId(aasId);
 			return toInstance(desc);
 		}
 		finally {
@@ -125,53 +162,8 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 	public List<MDTInstance> getInstanceAll() throws MDTInstanceManagerException {
 		m_rwLock.readLock().lock();
 		try {
-			return FStream.of(getWorkspaceDir().listFiles(File::isDirectory))
-							.map(File::getName)
-							.mapOrThrow(this::getInstance)
-							.cast(MDTInstance.class)
-							.toList();
-		}
-		finally {
-			m_rwLock.readLock().unlock();
-		}
-	}
-	
-	@Override
-	public FileBasedInstance<D> getInstanceByAasId(String aasId) throws ResourceNotFoundException {
-		m_rwLock.readLock().lock();
-		try {
-			D desc = FStream.of(getWorkspaceDir().listFiles(File::isDirectory))
-													.map(File::getName)
-													.mapOrIgnore(this::readDescriptor)
-													.filter(d -> d.getAasId().equals(aasId))
-													.findFirst()
-													.getOrNull();
-			if ( desc != null ) {
-				return toInstance(desc);
-			}
-			else {
-				throw new ResourceNotFoundException("MDTInstance: aas-id=" + aasId);
-			}
-		}
-		finally {
-			m_rwLock.readLock().unlock();
-		}
-	}
-	
-	@Override
-	public List<MDTInstance> getInstanceAllByIdShort(String aasIdShort) throws MDTInstanceManagerException {
-		m_rwLock.readLock().lock();
-		try {
-			FStream<D> descriptors = FStream.of(getWorkspaceDir().listFiles(File::isDirectory))
-																.map(File::getName)
-																.mapOrIgnore(this::readDescriptor);
-			if ( aasIdShort != null ) {
-				descriptors = descriptors.filter(pl -> aasIdShort.equals(pl.getAasIdShort()));
-			}
-			else {
-				descriptors = descriptors.filter(pl -> pl.getAasIdShort() == null);
-			}
-			return descriptors.map(this::toInstance)
+			return FStream.from(m_descriptorManager.getInstanceDescriptorAll())
+							.mapOrIgnore(this::toInstance)
 							.cast(MDTInstance.class)
 							.toList();
 		}
@@ -181,27 +173,51 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 	}
 
 	@Override
-	public FileBasedInstance<D> addInstance(String id, Environment env, Object arguments)
+	public List<MDTInstance> getInstanceAllByIdShort(String aasIdShort) throws MDTInstanceManagerException {
+		Preconditions.checkNotNull(aasIdShort);
+
+		m_rwLock.readLock().lock();
+		try {
+			return FStream.from(m_descriptorManager.getInstanceDescriptorAllByAasIdShort(aasIdShort))
+							.mapOrIgnore(this::toInstance)
+							.cast(MDTInstance.class)
+							.toList();
+		}
+		finally {
+			m_rwLock.readLock().unlock();
+		}
+	}
+
+	@Override
+	public AbstractInstance addInstance(String id, Environment env, String arguments)
 		throws MDTInstanceManagerException {
-		// AAS Environment 정의 파일을 읽어서 AAS Registry에 등록한다.
-		registerEnvironment(env);
-		
-		// AAS 정보와 이미지 식별자를 instance descriptor에 저장한다.
-		AssetAdministrationShell aas = env.getAssetAdministrationShells().get(0);
-		D desc = buildDescriptor(id, aas, arguments);
-		
 		m_rwLock.writeLock().lock();
 		try {
-			FileBasedInstance<D> instance = createInstance(desc);
-			if ( getLogger().isInfoEnabled() ) {
-				getLogger().info("added: " + instance);
+			// AAS Environment 정의 파일을 읽어서 AAS Registry에 등록한다.
+			registerEnvironment(env);
+	
+			AssetAdministrationShell aas = env.getAssetAdministrationShells().get(0);
+			try {
+				// AAS 정보와 이미지 식별자를 instance descriptor에 저장한다.
+				InstanceDescriptor desc = new InstanceDescriptor(id, aas.getId(), aas.getIdShort(), null, arguments);
+				desc = initializeInstance(desc);
+				
+				List<InstanceSubmodelDescriptor> smDescList
+							= FStream.from(env.getSubmodels())
+									.map(sm -> new InstanceSubmodelDescriptor(id, sm.getId(), sm.getIdShort()))
+									.toList();
+				desc.setSubmodels(smDescList);
+				m_descriptorManager.addInstanceDescriptor(desc);
+				AbstractInstance instance = toInstance(desc);
+				
+				Globals.EVENT_BUS.post(InstanceStatusChangeEvent.ADDED(id));
+				
+				return instance;
 			}
-			
-			return instance;
-		}
-		catch ( MDTInstanceManagerException e ) {
-			Try.run(() -> unregisterEnvironment(aas.getId()));
-			throw e;
+			catch ( MDTInstanceManagerException e ) {
+				Try.run(() -> unregisterEnvironment(aas.getId()));
+				throw e;
+			}
 		}
 		finally {
 			m_rwLock.writeLock().unlock();
@@ -209,28 +225,33 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 	}
 
 	@Override
-	public FileBasedInstance<D> addInstance(String id, File aasFile, Object arguments)
+	public AbstractInstance addInstance(String id, File aasFile, String arguments)
 		throws MDTInstanceManagerException {
-		Environment env = null;
+		m_rwLock.writeLock().lock();
 		try {
-			// AAS Environment 정의 파일을 읽어서 AAS Registry에 등록한다.
-			env = readEnvironment(aasFile);
+			Environment env = null;
+			try {
+				// AAS Environment 정의 파일을 읽어서 AAS Registry에 등록한다.
+				env = readEnvironment(aasFile);
+			}
+			catch ( MDTInstanceManagerException e ) {
+				throw e;
+			}
+			catch ( Exception e ) {
+				throw new MDTInstanceManagerException("" + e);
+			}
+			
+			return addInstance(id, env, arguments);
 		}
-		catch ( MDTInstanceManagerException e ) {
-			throw e;
+		finally {
+			m_rwLock.writeLock().unlock();
 		}
-		catch ( Exception e ) {
-			throw new MDTInstanceManagerException("" + e);
-		}
-		
-		return addInstance(id, env, arguments);
 	}
 
 	@Override
 	public void removeInstance(String id) throws MDTInstanceManagerException {
 		m_rwLock.writeLock().lock();
-		try {
-			FileBasedInstance<D> instance = getInstance(id);
+		try ( AbstractInstance instance = getInstance(id) ) {
 			switch ( instance.getStatus() ) {
 				case STARTING:
 				case RUNNING:
@@ -239,27 +260,44 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 			}
 			
 			Try.run(() -> unregisterEnvironment(instance.getAASId()));
+			Try.run(() -> m_descriptorManager.removeInstanceDescriptor(id));
 			Try.run(instance::remove);
-			
-	    	File topDir = new File(getWorkspaceDir(), instance.getId());
-	    	FileSystemUtils.deleteRecursively(topDir);
-	    	
+
+	    	publishStatusChangeEvent(InstanceStatusChangeEvent.REMOVED(id));
 			if ( getLogger().isInfoEnabled() ) {
 				getLogger().info("removed: " + instance);
 			}
 		}
+		catch ( IOException e ) { }
 		finally {
+	    	File topDir = new File(getWorkspaceDir(), id);
+	    	FileSystemUtils.deleteRecursively(topDir);
+	    	
 			m_rwLock.writeLock().unlock();
 		}
 	}
-	
+
 	@Override
 	public void removeInstanceAll() throws MDTInstanceManagerException {
 		m_rwLock.writeLock().lock();
 		try {
-			FStream.of(getWorkspaceDir().listFiles(File::isDirectory))
-					.map(File::getName)
-					.forEachOrIgnore(this::removeInstance);
+			List<InstanceDescriptor> descs = m_descriptorManager.getInstanceDescriptorAll();
+			for ( InstanceDescriptor desc: descs ) {
+				Try.run(() -> removeInstance(desc.getId()));
+				m_descriptorManager.removeInstanceDescriptor(desc.getId());
+			}
+			
+			// dangling registry를 삭제한다.
+			for ( SubmodelDescriptor desc: m_submodelRegistry.getAllSubmodelDescriptors() ) {
+				m_submodelRegistry.removeSubmodelDescriptorById(desc.getId());
+			}
+			for ( AssetAdministrationShellDescriptor desc: m_aasRegistry.getAllAssetAdministrationShellDescriptors() ) {
+				m_aasRegistry.removeAssetAdministrationShellDescriptorById(desc.getId());
+			}
+			
+			// dangling directory를 삭제한다.
+			FStream.of(m_workspaceDir.listFiles(File::isDirectory))
+					.forEachOrIgnore(FileUtils::deleteDirectory);
 		}
 		finally {
 			m_rwLock.writeLock().unlock();
@@ -274,25 +312,47 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 		return m_repositoryEndpointFormat;
 	}
 	
-	public File getWorkspaceDir() {
-		return m_workspaceDir;
+	@Subscribe
+	public void updateServiceEndpoint(InstanceStatusChangeEvent ev) {
+		m_rwLock.readLock().lock();
+		try {
+			MDTInstance inst = getInstance(ev.getId());
+			switch ( ev.getStatus() ) {
+				case RUNNING:
+					setServiceEndpoint(inst.getAASId(), ev.getServiceEndpoint());
+					break;
+				case STOPPED:
+				case FAILED:
+					unsetServiceEndpoint(inst.getAASId());
+					break;
+				default: break;
+			}
+		}
+		catch ( Exception ignored ) { }
+		finally {
+			m_rwLock.readLock().unlock();
+		}
 	}
 	
-	public JsonMapper getJsonMapper() {
-		return m_mapper;
+	private static JsonMapper s_mapper = JsonMapper.builder().build();
+	private static final String TOPIC_STATUS_CHANGES = "mdt/manager";
+	private static final int MQTT_QOS = 2;
+	private static final MqttConnectOptions MQTT_OPTIONS;
+	static {
+		MQTT_OPTIONS = new MqttConnectOptions();
+		MQTT_OPTIONS.setCleanSession(true);
 	}
 	
-	public void instanceStatusChanged(StatusResult result) {
-		MDTInstance inst = getInstance(result.getId());
-		switch ( result.getStatus() ) {
-			case RUNNING:
-				setServiceEndpoint(inst.getAASId(), result.getServiceEndpoint());
-				break;
-			case STOPPED:
-			case FAILED:
-				unsetServiceEndpoint(inst.getAASId());
-				break;
-			default: break;
+	@Subscribe
+	public void publishStatusChangeEvent(InstanceStatusChangeEvent ev) {
+		try {
+			String jsonStr = s_mapper.writeValueAsString(new JsonEvent<>(ev));
+			MqttMessage message = new MqttMessage(jsonStr.getBytes());
+			message.setQos(MQTT_QOS);
+			m_mqttClient.publish(TOPIC_STATUS_CHANGES, message);
+		}
+		catch ( Exception e ) {
+			s_logger.error("Failed to publish event, cause=" + e);
 		}
 	}
 	
@@ -304,37 +364,6 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 	@Override
 	public void setLogger(Logger logger) {
 		m_logger = (logger != null) ? logger : s_logger;
-	}
-
-	public FileBasedInstance<D> createInstance(D desc) {
-		File instanceDir = new File(getWorkspaceDir(), desc.getId());
-		try {
-			Files.createDirectories(instanceDir.toPath());
-			
-			desc = buildInstance(instanceDir, desc);
-			
-			File descFile = new File(instanceDir, "descriptor.json");
-			m_mapper.writeValue(descFile, desc);
-			
-			return toInstance(desc);
-		}
-		catch ( Exception e ) {
-	    	Try.run(() -> FileSystemUtils.deleteRecursively(instanceDir));
-			
-			throw new MDTInstanceManagerException("Failed to create MDTInstance: desc=" + desc
-												+ ", cause=" + e);
-		}
-	}
-	
-	private D readDescriptor(String id) throws ResourceNotFoundException,
-															MDTInstanceManagerException {
-		File instanceDir = new File(getWorkspaceDir(), id);
-		if ( !instanceDir.isDirectory() ) {
-			throw new ResourceNotFoundException("MDTInstance: id=" + id
-												+ ", instanceDir does not exist dir=" + instanceDir);
-		}
-		File descFile = new File(instanceDir, DESCRIPTOR_FILE_NAME);
-		return readDescriptor(descFile);
 	}
 	
 	private Environment readEnvironment(File aasEnvFile)
@@ -351,7 +380,7 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 			Set<String> submodelIds = Sets.newHashSet();
 			for ( Submodel submodel: env.getSubmodels() ) {
 				if ( submodelIds.contains(submodel.getId()) ) {
-					throw new ResourceAlreadyExistsException("Duplicate Submodel: id=" + submodel.getId());
+					throw new ResourceAlreadyExistsException("Submodel", submodel.getId());
 				}
 				submodelIds.add(submodel.getId());
 			}
@@ -360,7 +389,7 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 			for ( Reference ref: aas.getSubmodels() ) {
 				String refId = ref.getKeys().get(0).getValue();
 				if ( !submodelIds.contains(refId) ) {
-					throw new ResourceNotFoundException("Dangling Submodel Ref: " + refId);
+					throw new ResourceNotFoundException("Submodel", refId);
 				}
 			}
 			
@@ -370,7 +399,7 @@ public abstract class FileBasedInstanceManager<D extends InstanceDescriptor>
 			throw new MDTInstanceManagerException("failed to parse Environment: file=" + aasEnvFile);
 		}
 	}
-	
+
 	private AssetAdministrationShellDescriptor registerEnvironment(Environment env) {
 		// 주어진 Environment에 정의된 모든 Submodel들로 부터 SubmodelDescriptor 객체를 생성한다.
 		Map<String,DefaultSubmodelDescriptor> smDescMap = Maps.newHashMap();

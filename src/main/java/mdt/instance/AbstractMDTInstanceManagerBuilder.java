@@ -3,8 +3,8 @@ package mdt.instance;
 import java.io.File;
 
 import mdt.model.ServiceFactory;
-import mdt.model.registry.AssetAdministrationShellRegistry;
-import mdt.model.registry.SubmodelRegistry;
+import mdt.registry.AssetAdministrationShellRegistryProvider;
+import mdt.registry.SubmodelRegistryProvider;
 
 /**
  *
@@ -14,10 +14,11 @@ public abstract class AbstractMDTInstanceManagerBuilder<B extends MDTInstanceMan
 														T extends MDTInstanceManagerProvider>
 																implements MDTInstanceManagerBuilder<B,T> {
 	protected ServiceFactory m_serviceFact;
-	protected AssetAdministrationShellRegistry m_aasRegistry;
-	protected SubmodelRegistry m_submodelRegistry;
+	protected AssetAdministrationShellRegistryProvider m_aasRegistry;
+	protected SubmodelRegistryProvider m_submodelRegistry;
 	protected String m_repositoryEndpointFormat;
 	protected File m_workspaceDir;
+	protected InstanceDescriptorManager m_descMgr;
 	
 	protected abstract T internalBuild();
 	
@@ -37,23 +38,23 @@ public abstract class AbstractMDTInstanceManagerBuilder<B extends MDTInstanceMan
 	}
 
 	@Override
-	public AssetAdministrationShellRegistry aasRegistry() {
+	public AssetAdministrationShellRegistryProvider aasRegistry() {
 		return m_aasRegistry;
 	}
 
 	@Override
-	public B aasRegistry(AssetAdministrationShellRegistry aasRegistry) {
+	public B aasRegistry(AssetAdministrationShellRegistryProvider aasRegistry) {
 		m_aasRegistry = aasRegistry;
 		return self();
 	}
 
 	@Override
-	public SubmodelRegistry submodeRegistry() {
+	public SubmodelRegistryProvider submodeRegistry() {
 		return m_submodelRegistry;
 	}
 
 	@Override
-	public B submodeRegistry(SubmodelRegistry submodelRegistry) {
+	public B submodeRegistry(SubmodelRegistryProvider submodelRegistry) {
 		m_submodelRegistry = submodelRegistry;
 		return self();
 	}
@@ -77,6 +78,17 @@ public abstract class AbstractMDTInstanceManagerBuilder<B extends MDTInstanceMan
 	@Override
 	public B workspaceDir(File workspaceDir) {
 		m_workspaceDir = workspaceDir;
+		return self();
+	}
+
+	@Override
+	public InstanceDescriptorManager instanceDescriptorManager() {
+		return m_descMgr;
+	}
+
+	@Override
+	public B instanceDescriptorManager(InstanceDescriptorManager descMgr) {
+		m_descMgr = descMgr;
 		return self();
 	}
 	

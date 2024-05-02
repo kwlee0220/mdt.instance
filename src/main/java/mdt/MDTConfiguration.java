@@ -1,6 +1,8 @@
 package mdt;
 
 import java.io.File;
+import java.sql.Connection;
+import java.sql.SQLException;
 
 import org.mandas.docker.client.exceptions.DockerException;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,10 +12,13 @@ import org.springframework.context.annotation.Configuration;
 
 import utils.jdbc.JdbcProcessor;
 
+import lombok.Data;
 import lombok.Setter;
 import mdt.client.HttpServiceFactory;
 import mdt.controller.MDTInstanceManagerConfiguration;
 import mdt.exector.jar.JarInstanceExecutor;
+import mdt.instance.InstanceDescriptorManager;
+import mdt.instance.JdbcInstanceDescriptorManager;
 import mdt.instance.docker.DockerConfiguration;
 import mdt.instance.docker.DockerInstanceManager;
 import mdt.instance.jar.JarInstanceManager;
@@ -55,6 +60,18 @@ public class MDTConfiguration {
 		CachingFileMDTAASRegistry aasRegistry = getAssetAdministrationShellRegistry();
 		CachingFileMDTSubmodelRegistry submodelRegistry = getSubmodelRegistry();
 		
+		JdbcProcessor jdbc = getJdbcProcessor();
+		if ( !jdbc.existsTable(JdbcInstanceDescriptorManager.TABLE) ) {
+			try ( Connection conn = jdbc.connect() ) {
+				JdbcInstanceDescriptorManager.createTable(conn);
+			}
+			catch ( SQLException e ) {
+				throw new MDTInstanceManagerException("Failed to format MDTInstanceManager, cause=" + e);
+			}
+		}
+		
+		InstanceDescriptorManager descMgr = new JdbcInstanceDescriptorManager(jdbc);
+		
 		MDTInstanceManagerConfiguration conf = getMDTInstanceManagerConfiguration();
 		String format = conf.getRepositoryEndpointFormat();
 		switch ( conf.getType() ) {
@@ -66,16 +83,19 @@ public class MDTConfiguration {
 										.repositoryEndpointFormat(format)
 										.workspaceDir(m_workspaceDir)
 										.executor(getJarInstanceExecutor())
+										.instanceDescriptorManager(descMgr)
 										.build();
 			case "docker":
 				DockerConfiguration dockerConf = getDockerConfiguration();
 				return DockerInstanceManager.builder()
-											.dockerHost(dockerConf.getDockerHost())
 											.serviceFactory(svcFact)
 											.aasRegistry(aasRegistry)
 											.submodeRegistry(submodelRegistry)
 											.repositoryEndpointFormat(format)
 											.workspaceDir(m_workspaceDir)
+											.instanceDescriptorManager(descMgr)
+											.dockerHost(dockerConf.getDockerHost())
+											.mountPrefix(dockerConf.getMountPrefix())
 											.build();
 			case "kubernetes":
 				return KubernetesInstanceManager.builder()
@@ -84,6 +104,7 @@ public class MDTConfiguration {
 												.submodeRegistry(submodelRegistry)
 												.repositoryEndpointFormat(format)
 												.workspaceDir(m_workspaceDir)
+												.instanceDescriptorManager(descMgr)
 												.build();
 			default:
 				throw new MDTInstanceManagerException("Unknown MDTInstanceManager type: "
@@ -98,7 +119,7 @@ public class MDTConfiguration {
 	}
 
 	@Bean
-	@ConfigurationProperties(prefix = "repository.aas")
+	@ConfigurationProperties(prefix = "registry.aas")
 	CachingFileBasedRegistryConfiguration getAASRegistryConfiguration() {
 		return new CachingFileBasedRegistryConfiguration();
 	}
@@ -110,7 +131,7 @@ public class MDTConfiguration {
 	}
 	
 	@Bean
-	@ConfigurationProperties(prefix = "repository.submodel")
+	@ConfigurationProperties(prefix = "registry.submodel")
 	CachingFileBasedRegistryConfiguration getSubmodelRegistryConfiguration() {
 		return new CachingFileBasedRegistryConfiguration();
 	}
@@ -123,14 +144,20 @@ public class MDTConfiguration {
 	
 	@Bean
 	JdbcProcessor getJdbcProcessor() {
-		JdbcProcessor.Configuration jconf = getJdbcConfiguration();
-		return JdbcProcessor.create(jconf);
+		JdbcConfiguration conf = getJdbcConfiguration();
+		return JdbcProcessor.create(conf.getUrl(), conf.getUser(), conf.getPassword());
 	}
-	
+
+	@Data
+	public static class JdbcConfiguration {
+		private String url;
+		private String user;
+		private String password;
+	}
 	@Bean
-	@ConfigurationProperties(prefix = "jdbc")
-	JdbcProcessor.Configuration getJdbcConfiguration() {
-		return new JdbcProcessor.Configuration();
+	@ConfigurationProperties(prefix = "instance-manager.jdbc")
+	JdbcConfiguration getJdbcConfiguration() {
+		return new JdbcConfiguration();
 	}
 	
 //	@Bean

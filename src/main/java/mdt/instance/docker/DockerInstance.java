@@ -6,39 +6,42 @@ import org.mandas.docker.client.DockerClient;
 import org.mandas.docker.client.DockerClient.RemoveContainerParam;
 import org.mandas.docker.client.exceptions.ContainerNotFoundException;
 import org.mandas.docker.client.exceptions.DockerException;
+import org.mandas.docker.client.messages.Container;
 import org.mandas.docker.client.messages.ContainerInfo;
 import org.mandas.docker.client.messages.PortBinding;
 
-import com.google.common.base.Preconditions;
-
-import mdt.client.InternalException;
-import mdt.instance.FileBasedInstance;
+import mdt.Globals;
+import mdt.instance.AbstractInstance;
+import mdt.instance.InstanceDescriptor;
+import mdt.instance.InstanceStatusChangeEvent;
+import mdt.model.InternalException;
+import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
-import mdt.model.instance.StatusResult;
+import mdt.model.instance.StartResult;
 
 /**
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class DockerInstance extends FileBasedInstance<DockerInstanceDescriptor> {
+public class DockerInstance extends AbstractInstance implements MDTInstance {
 	@SuppressWarnings("unused")
-	private static final String FA3ST_IMAGE_PATH = "mdt/faaast-service";
+	private static final String FA3ST_IMAGE_PATH = "kwlee0220/faaast-service";
 	private static final int SECONDS_TO_WAIT_BEFORE_KILLING = 30;
 	
-	DockerInstance(DockerInstanceManager manager, DockerInstanceDescriptor desc) {
+	private final Container m_container;
+	
+	DockerInstance(DockerInstanceManager manager, InstanceDescriptor desc, Container container) {
 		super(manager, desc);
+		
+		m_container = container;
 	}
 	
 	@Override
 	public MDTInstanceStatus getStatus() {
-		DockerInstanceDescriptor desc = getInstanceDescriptor();
-		if ( desc.getContainerId() == null ) {
-			return MDTInstanceStatus.STOPPED;
-		}
-		
 		try ( DockerClient docker = newDockerClient() ) {
-			ContainerInfo info = docker.inspectContainer(desc.getContainerId());
+			m_container.state();
+			ContainerInfo info = docker.inspectContainer(m_container.id());
 			if ( info.state().running() ) {
 				return MDTInstanceStatus.RUNNING;
 			}
@@ -59,13 +62,8 @@ public class DockerInstance extends FileBasedInstance<DockerInstanceDescriptor> 
 
 	@Override
 	public String getServiceEndpoint() {
-		DockerInstanceDescriptor desc = getInstanceDescriptor();
-		if ( desc.getContainerId() == null ) {
-			return null;
-		}
-		
 		try ( DockerClient docker = newDockerClient() ) {
-			ContainerInfo info = docker.inspectContainer(desc.getContainerId());
+			ContainerInfo info = docker.inspectContainer(m_container.id());
 			if ( info.state().running() ) {
 				int repoPort = getRepositoryPort(info);
 				return getInstanceManager().toServiceEndpoint(repoPort);
@@ -83,44 +81,35 @@ public class DockerInstance extends FileBasedInstance<DockerInstanceDescriptor> 
 	}
 
 	@Override
-	public StatusResult start() {
-		DockerInstanceDescriptor desc = getInstanceDescriptor();
-		Preconditions.checkState(desc.getContainerId() != null, "No Docker Container has been assigned: id=" + getId());
-		
+	public StartResult start() {
 		try ( DockerClient docker = newDockerClient() ) {
-			docker.startContainer(desc.getContainerId());
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STARTING(getId()));
+			docker.startContainer(m_container.id());
 			
-			ContainerInfo info = docker.inspectContainer(desc.getContainerId());
+			ContainerInfo info = docker.inspectContainer(m_container.id());
 			int repoPort = getRepositoryPort(info);
 			
 			String svcEndpoint = getInstanceManager().toServiceEndpoint(repoPort);
-			StatusResult result = new StatusResult(getId(), MDTInstanceStatus.RUNNING, svcEndpoint);
-			getInstanceManager().instanceStatusChanged(result);
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.RUNNING(getId(), svcEndpoint));
 			
-			return result;
+			return new StartResult(MDTInstanceStatus.RUNNING, svcEndpoint);
 		}
 		catch ( Exception e ) {
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(m_container.id()));
 			throw new MDTInstanceManagerException("Failed to start MDTInstance: id=" + getId() + ", cause=" + e);
 		}
 	}
 	
 	@Override
-	public StatusResult stop() {
-		DockerInstanceDescriptor desc = getInstanceDescriptor();
-		if ( desc.getContainerId() == null ) {
-			return new StatusResult(getId(), MDTInstanceStatus.STOPPED, null);
-		}
-		
+	public void stop() {
 		try ( DockerClient docker = newDockerClient() ) {
-			docker.stopContainer(desc.getContainerId(), SECONDS_TO_WAIT_BEFORE_KILLING);
-
-			StatusResult result = new StatusResult(getId(), MDTInstanceStatus.STOPPED, null);
-			getInstanceManager().instanceStatusChanged(result);
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPING(getId()));
 			
-			return result;
+			docker.stopContainer(m_container.id(), SECONDS_TO_WAIT_BEFORE_KILLING);
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(getId()));
 		}
 		catch ( ContainerNotFoundException e ) {
-			return new StatusResult(getId(), MDTInstanceStatus.STOPPED, null);
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(getId()));
 		}
 		catch ( InterruptedException | DockerException e ) {
 			throw new MDTInstanceManagerException("Failed to stop the MDTInstance: id=" + getId()
@@ -129,13 +118,8 @@ public class DockerInstance extends FileBasedInstance<DockerInstanceDescriptor> 
 	}
 	
 	protected void remove() {
-		DockerInstanceDescriptor desc = getInstanceDescriptor();
-		if ( desc.getContainerId() == null ) {
-			return;
-		}
-		
 		try ( DockerClient docker = newDockerClient() ) {
-			docker.removeContainer(desc.getContainerId(), RemoveContainerParam.forceKill());
+			docker.removeContainer(m_container.id(), RemoveContainerParam.forceKill());
 		}
 		catch ( ContainerNotFoundException expected ) { }
 		catch ( Exception e ) {

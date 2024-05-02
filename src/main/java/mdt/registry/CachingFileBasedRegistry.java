@@ -1,8 +1,6 @@
 package mdt.registry;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -10,11 +8,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
-
-import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.DeserializationException;
-import org.eclipse.digitaltwin.aas4j.v3.dataformat.core.SerializationException;
-import org.eclipse.digitaltwin.aas4j.v3.dataformat.json.JsonDeserializer;
-import org.eclipse.digitaltwin.aas4j.v3.dataformat.json.JsonSerializer;
+import java.util.function.Function;
 
 import com.google.common.base.Preconditions;
 import com.google.common.cache.CacheBuilder;
@@ -38,21 +32,21 @@ import mdt.model.registry.ResourceNotFoundException;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class CachingFileBasedRegistry<T> {
+public class CachingFileBasedRegistry<D> {
 	private final String m_resourceName;
-	private final CachingFileObjectStore<String, T> m_store;
+	private final CachingFileObjectStore<String, LazyDescriptor<D>> m_store;
 	private final Method m_getIdShort;
 	private final int m_cacheSize;
 	
-	public CachingFileBasedRegistry(File storeDir, int cacheSize, Class<T> descCls)
+	public CachingFileBasedRegistry(File storeDir, int cacheSize, Class<D> descCls, Function<String,D> deser)
 		throws RegistryException {
 		try {
 			m_resourceName = descCls.getSimpleName();
 			
 			m_cacheSize = cacheSize;
-			DescriptorHandler<T> descHandler = new DescriptorHandler<>(storeDir, descCls);
-			FileObjectStore<String,T> baseStore = new DefaultFileObjectStore<>(storeDir, descHandler);
-			LoadingCache<String, T> cache = CacheBuilder.newBuilder()
+			DescriptorHandler<D> descHandler = new DescriptorHandler<>(storeDir, deser);
+			FileObjectStore<String,LazyDescriptor<D>> baseStore = new DefaultFileObjectStore<>(storeDir, descHandler);
+			LoadingCache<String, LazyDescriptor<D>> cache = CacheBuilder.newBuilder()
 														.maximumSize(cacheSize)
 														.build(new DescriptorCacheLoader<>(baseStore));
 			m_store = new CachingFileObjectStore<>(baseStore, cache);
@@ -78,6 +72,26 @@ public class CachingFileBasedRegistry<T> {
 		return m_store.getRootDir();
 	}
 
+	public LazyDescriptor<D> getDescriptorById(String id) throws ResourceNotFoundException, RegistryException {
+		Preconditions.checkNotNull(id, m_resourceName + " id");
+		
+		try {
+			Optional<LazyDescriptor<D>> resource = m_store.get(id);
+			if ( resource.isEmpty() ) {
+				throw new ResourceNotFoundException(m_resourceName, id);
+			}
+			
+			return resource.get();
+		}
+		catch ( IOException e ) {
+			throw new RegistryException("" + e);
+		}
+		catch ( ExecutionException e ) {
+			Throwable cause = Throwables.unwrapThrowable(e);
+			throw new RegistryException("" + cause);
+		}
+	}
+
     public List<String> getAllDescriptorIds() throws RegistryException {
     	try {
         	return Lists.newArrayList(m_store.getFileObjectKeyAll());
@@ -87,7 +101,7 @@ public class CachingFileBasedRegistry<T> {
 		}
     }
 
-	public List<T> getAllDescriptors() throws RegistryException {
+	public List<LazyDescriptor<D>> getAllDescriptors() throws RegistryException {
 		try {
 			return m_store.getFileObjectAll();
 		}
@@ -100,11 +114,11 @@ public class CachingFileBasedRegistry<T> {
 		}
 	}
 
-	public List<T> getAllDescriptorsByShortId(String idShort) throws RegistryException {
+	public List<LazyDescriptor<D>> getAllDescriptorsByShortId(String idShort) throws RegistryException {
 		Preconditions.checkNotNull(idShort, m_resourceName + " idShort");
 		
 		try {
-			FStream<T> stream = FStream.from(m_store.getFileObjectAll());
+			FStream<LazyDescriptor<D>> stream = FStream.from(m_store.getFileObjectAll());
 			if ( idShort != null ) {
 				stream = stream.filter(desc -> filterByShortId(desc, idShort));
 			}
@@ -119,34 +133,15 @@ public class CachingFileBasedRegistry<T> {
 		}
 	}
 
-	public T getDescriptorById(String id) throws ResourceNotFoundException, RegistryException {
-		Preconditions.checkNotNull(id, m_resourceName + " id");
-		
-		try {
-			Optional<T> resource = m_store.get(id);
-			if ( resource.isEmpty() ) {
-				throw new ResourceNotFoundException(m_resourceName + " id: " + id);
-			}
-			
-			return resource.get();
-		}
-		catch ( IOException e ) {
-			throw new RegistryException("" + e);
-		}
-		catch ( ExecutionException e ) {
-			Throwable cause = Throwables.unwrapThrowable(e);
-			throw new RegistryException("" + cause);
-		}
-	}
-
-	public T addDescriptor(String id, T descriptor) throws ResourceAlreadyExistsException, RegistryException {
+	public LazyDescriptor<D> addDescriptor(String id, LazyDescriptor<D> descriptor)
+		throws ResourceAlreadyExistsException, RegistryException {
 		try {
 			Preconditions.checkNotNull(descriptor);
 			Preconditions.checkNotNull(id, m_resourceName + " id");
 			
 			Optional<File> file = m_store.insert(id, descriptor);
 			if ( file.isEmpty() ) {
-				throw new ResourceAlreadyExistsException(m_resourceName + " id: " + id);
+				throw new ResourceAlreadyExistsException(m_resourceName, id);
 			}
 			return descriptor;
 		}
@@ -165,7 +160,7 @@ public class CachingFileBasedRegistry<T> {
     	try {
     		boolean done = m_store.remove(id);
     		if ( !done ) {
-				throw new ResourceNotFoundException(m_resourceName + " id: " + id);
+				throw new ResourceAlreadyExistsException(m_resourceName, id);
     		}
 		}
 		catch ( IOException e ) {
@@ -173,7 +168,8 @@ public class CachingFileBasedRegistry<T> {
 		}
 	}
 
-	public T updateDescriptor(String id, T descriptor) throws ResourceNotFoundException, RegistryException {
+	public LazyDescriptor<D> updateDescriptor(String id, LazyDescriptor<D> descriptor)
+		throws ResourceNotFoundException, RegistryException {
 		removeDescriptor(id);
 		return addDescriptor(id, descriptor);
 	}
@@ -184,37 +180,24 @@ public class CachingFileBasedRegistry<T> {
 								m_resourceName, m_store.getRootDir(), m_cacheSize);
 	}
 	
-	private static final class DescriptorHandler<T> implements FileObjectHandler<String, T> {
+	private static final class DescriptorHandler<D> implements FileObjectHandler<String, LazyDescriptor<D>> {
 		private final File m_rootDir;
-		private final Class<T> m_descCls;
-		private final JsonSerializer m_ser;
-		private final JsonDeserializer m_deser;
+		private final Function<String,D> m_deser;
 		
-		DescriptorHandler(File rootDir, Class<T> descCls) {
+		DescriptorHandler(File rootDir, Function<String,D> deser) {
 			m_rootDir = rootDir;
-			m_descCls = descCls;
-			m_ser = new JsonSerializer();
-			m_deser = new JsonDeserializer();
+			m_deser = deser;
 		}
 		
 		@Override
-		public T readFileObject(File file) throws IOException, ExecutionException {
-    		try ( FileInputStream fis = new FileInputStream(file) ) {
-    			return m_deser.read(fis, m_descCls);
-    		}
-			catch ( DeserializationException e ) {
-				throw new ExecutionException(e);
-			}
+		public LazyDescriptor<D> readFileObject(File file) throws IOException, ExecutionException {
+			String jsonDesc = Files.readString(file.toPath());
+			return new LazyDescriptor<>(jsonDesc, m_deser);
 		}
 
 		@Override
-		public void writeFileObject(T obj, File file) throws IOException, ExecutionException {
-			try ( FileOutputStream fos = new FileOutputStream(file) ) {
-				m_ser.write(fos, obj);
-			}
-			catch ( SerializationException e ) {
-				throw new ExecutionException(e);
-			}
+		public void writeFileObject(LazyDescriptor<D> obj, File file) throws IOException, ExecutionException {
+			Files.writeString(file.toPath(), obj.getJson());
 		}
 
 		@Override
@@ -234,20 +217,20 @@ public class CachingFileBasedRegistry<T> {
 		}
 	}
     
-    private static class DescriptorCacheLoader<T> extends CacheLoader<String, T> {
-    	private final FileObjectStore<String,T> m_store;
+    private static class DescriptorCacheLoader<D> extends CacheLoader<String, LazyDescriptor<D>> {
+    	private final FileObjectStore<String,LazyDescriptor<D>> m_store;
     	
-    	DescriptorCacheLoader(FileObjectStore<String,T> store) {
+    	DescriptorCacheLoader(FileObjectStore<String,LazyDescriptor<D>> store) {
     		m_store = store;
     	}
     	
 		@Override
-		public T load(String key) throws Exception {
+		public LazyDescriptor<D> load(String key) throws Exception {
 			return m_store.get(key).get();
 		}
     }
 	
-	private boolean filterByShortId(T desc, String idShort) {
+	private boolean filterByShortId(LazyDescriptor<D> desc, String idShort) {
 		try {
 			Object ret = m_getIdShort.invoke(desc);
 			return idShort.equals(ret);

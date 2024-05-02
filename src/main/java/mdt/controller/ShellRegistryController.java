@@ -62,7 +62,7 @@ public class ShellRegistryController extends MDTController<AssetAdministrationSh
     public String getAssetAdministrationShellDescriptorById(@PathVariable("aasId") String aasId)
     	throws SerializationException {
 		aasId = decodeBase64(aasId);
-		return s_ser.write(m_registry.getAssetAdministrationShellDescriptorById(aasId));
+		return m_registry.getJsonAssetAdministrationShellDescriptorById(aasId);
     }
 
     @PostMapping({"", "/"})

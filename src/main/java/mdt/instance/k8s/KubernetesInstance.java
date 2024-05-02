@@ -1,10 +1,13 @@
 package mdt.instance.k8s;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
+import utils.Throwables;
+import utils.func.Lazy;
 import utils.func.Unchecked;
 import utils.stream.FStream;
 
@@ -15,11 +18,15 @@ import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
-import mdt.instance.FileBasedInstance;
+import mdt.Globals;
+import mdt.instance.AbstractInstance;
+import mdt.instance.InstanceDescriptor;
+import mdt.instance.InstanceStatusChangeEvent;
+import mdt.model.instance.KubernetesExecutionArguments;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
-import mdt.model.instance.StatusResult;
+import mdt.model.instance.StartResult;
 import mdt.model.registry.RegistryException;
 
 
@@ -27,24 +34,31 @@ import mdt.model.registry.RegistryException;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDescriptor> implements MDTInstance {
+public class KubernetesInstance extends AbstractInstance implements MDTInstance, Closeable {
 	public static final String NAMESPACE = "mdt-instance";
 	
-	private final KubernetesRemote m_kube;
+	private final Lazy<KubernetesRemote> m_kube = Lazy.of(this::newKubernetesRemote);
 	private String m_workerHostname = null;
 	
-	KubernetesInstance(KubernetesInstanceManager manager, KubernetesInstanceDescriptor desc) {
+	KubernetesInstance(KubernetesInstanceManager manager, InstanceDescriptor desc) {
 		super(manager, desc);
-		
-		m_kube = manager.getKubernetesRemote();
+	}
+	
+	private KubernetesRemote newKubernetesRemote() {
+		return ((KubernetesInstanceManager)m_manager).newKubernetesRemote();
+	}
+
+	@Override
+	public void close() throws IOException {
+		m_kube.ifLoadedOrThrow(KubernetesRemote::close);
 	}
 
 	@Override
 	public String getServiceEndpoint() {
-		Service service = m_kube.getService(NAMESPACE, getId());
+		Service service = m_kube.get().getService(NAMESPACE, getId());
 		if ( service != null ) {
 			int port = service.getSpec().getPorts().get(0).getNodePort();
-			return String.format("http://%s:%d", m_workerHostname, port);
+			return toServiceEndpoint(port);
 		}
 		else {
 			return null;
@@ -53,7 +67,7 @@ public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDesc
 
 	@Override
 	public MDTInstanceStatus getStatus() {
-		Pod pod = m_kube.getPod(NAMESPACE, getId());
+		Pod pod = m_kube.get().getPod(NAMESPACE, getId());
 		if ( pod == null ) {
 			return MDTInstanceStatus.STOPPED;
 		}
@@ -76,49 +90,56 @@ public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDesc
 	}
 
 	@Override
-	public StatusResult start() {
-		KubernetesInstanceDescriptor desc = getInstanceDescriptor();
-		
-		try ( KubernetesRemote k8s = m_kube; ) {
-			Deployment deployment = buildDeploymentResource(desc.getArguments().getImageId());
+	public StartResult start() {
+		InstanceDescriptor desc = getInstanceDescriptor();
+
+		KubernetesRemote k8s = m_kube.get();
+		Deployment deployment = null;
+		try {
+			KubernetesInstanceManager mgr = getInstanceManager();
+			KubernetesExecutionArguments args = mgr.parseExecutionArguments(desc.getArguments());
+			
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STARTING(desc.getId()));
+			
+			deployment = buildDeploymentResource(args.getImageId());
 			deployment = k8s.createDeployment(NAMESPACE, deployment);
 			
-			try {
-				Service svc = buildServiceResource();
-				
-				int svcPort = k8s.createService(NAMESPACE, svc);
-				m_workerHostname = selectWorkerHostname();
-				String endpoint = String.format("http://%s:%d", m_workerHostname, svcPort);
-				
-				return new StatusResult(getId(), MDTInstanceStatus.RUNNING, endpoint);
-			}
-			catch ( RegistryException e ) {
-				Unchecked.runOrIgnore(() -> k8s.deleteService(NAMESPACE, toServiceName(getId())));
-				Unchecked.runOrIgnore(() -> k8s.deleteDeployment(NAMESPACE, toDeploymentName(getId())));
-				
-				throw new MDTInstanceManagerException("fails to update MDTInstance status, cause=" + e);
-			}
-			catch ( Exception e ) {
-				Unchecked.acceptOrIgnore(k8s::deleteDeployment, deployment);
-				throw e;
-			}
+			Service svc = buildServiceResource();
+
+			m_workerHostname = selectWorkerHostname();
+			int svcPort = k8s.createService(NAMESPACE, svc);
+			String endpoint = toServiceEndpoint(svcPort);
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.RUNNING(desc.getId(), endpoint));
+			
+			return new StartResult(MDTInstanceStatus.RUNNING, endpoint);
 		}
-		catch ( IOException e ) {
-			throw new MDTInstanceManagerException("fails to connect to Kubernetes, cause=" + e);
+		catch ( RegistryException e ) {
+			Unchecked.runOrIgnore(() -> k8s.deleteService(NAMESPACE, toServiceName(getId())));
+			Unchecked.runOrIgnore(() -> k8s.deleteDeployment(NAMESPACE, toDeploymentName(getId())));
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(desc.getId()));
+			
+			throw new MDTInstanceManagerException("fails to update MDTInstance status, cause=" + e);
+		}
+		catch ( Exception e ) {
+			Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(desc.getId()));
+			
+			Unchecked.acceptOrIgnore(k8s::deleteDeployment, deployment);
+			Throwables.throwIfInstanceOf(e, MDTInstanceManagerException.class);
+			throw new MDTInstanceManagerException("Failed to start MDTInstance: id=" + getId() + ", cause=" + e);
 		}
 	}
 
 	@Override
-	public StatusResult stop() {
-		try ( KubernetesRemote k8s = m_kube ) {
-			Unchecked.runOrIgnore(() -> k8s.deleteService(NAMESPACE, toServiceName(getId())));
-			Unchecked.runOrIgnore(() -> k8s.deleteDeployment(NAMESPACE, toDeploymentName(getId())));
-			
-			return new StatusResult(getId(), MDTInstanceStatus.STOPPED, null);
-		}
-		catch ( IOException e ) {
-			throw new MDTInstanceManagerException("fails to connect to Kubernetes, cause=" + e);
-		}
+	public void stop() {
+		KubernetesRemote k8s = m_kube.get();
+
+		Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPING(getId()));
+		
+		Unchecked.runOrIgnore(() -> k8s.deleteService(NAMESPACE, toServiceName(getId())));
+		Unchecked.runOrIgnore(() -> k8s.deleteDeployment(NAMESPACE, toDeploymentName(getId())));
+		m_workerHostname = null;
+
+		Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(getId()));
 	}
 
 	@Override
@@ -126,8 +147,15 @@ public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDesc
 		// nothing to do
 	}
 	
+	private String toServiceEndpoint(int svcPort) {
+		if ( m_workerHostname == null ) {
+			m_workerHostname = selectWorkerHostname();
+		}
+		return String.format("https://%s:%d/api/v3.0", m_workerHostname, svcPort);
+	}
+	
 	private String selectWorkerHostname() {
-		List<Node> workers = m_kube.getWorkerNodeAll();
+		List<Node> workers = m_kube.get().getWorkerNodeAll();
 		int idx = new Random().nextInt(workers.size());
 		
 		List<NodeAddress> addresses = workers.get(idx).getStatus().getAddresses();
@@ -175,7 +203,7 @@ public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDesc
 										.withName(toContainerName(getId()))
 										.withImage(imageId)
 										.addNewPort()
-											.withContainerPort(80)
+											.withContainerPort(443)
 										.endPort()
 									.endContainer()
 								.endSpec()
@@ -195,7 +223,7 @@ public class KubernetesInstance extends FileBasedInstance<KubernetesInstanceDesc
 						.addNewPort()
 							.withName("service-port")
 							.withProtocol("TCP")
-							.withPort(80)
+							.withPort(443)
 						.endPort()
 				    .endSpec()
 			    .build();

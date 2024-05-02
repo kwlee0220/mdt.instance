@@ -3,17 +3,22 @@ package mdt.instance.jar;
 import java.io.File;
 import java.io.IOException;
 
-import org.eclipse.digitaltwin.aas4j.v3.model.AssetAdministrationShell;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.base.Preconditions;
 import com.google.common.io.Files;
 
+import mdt.Globals;
 import mdt.exector.jar.JarExecutionListener;
 import mdt.exector.jar.JarInstanceExecutor;
+import mdt.instance.AbstractInstanceManager;
 import mdt.instance.AbstractMDTInstanceManagerBuilder;
-import mdt.instance.FileBasedInstanceManager;
+import mdt.instance.InstanceDescriptor;
+import mdt.instance.InstanceStatusChangeEvent;
+import mdt.model.InternalException;
 import mdt.model.instance.JarExecutionArguments;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
@@ -23,17 +28,19 @@ import mdt.model.instance.MDTInstanceStatus;
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class JarInstanceManager extends FileBasedInstanceManager<JarInstanceDescriptor> {
+public class JarInstanceManager extends AbstractInstanceManager {
 	private static final Logger s_logger = LoggerFactory.getLogger(JarInstanceManager.class);
 	
 	private final JarInstanceExecutor m_executor;
+	private final JsonMapper m_mapper;
 	
 	public JarInstanceManager(JarInstanceManagerBuilder builder) {
 		super(builder);
 		setLogger(s_logger);
 		
 		Preconditions.checkNotNull(builder.m_exector, "JarInstanceExecutor was null");
-		
+
+		m_mapper = JsonMapper.builder().build();
 		m_executor = builder.m_exector;
 		m_executor.addExecutionListener(m_execListener);
 	}
@@ -42,66 +49,56 @@ public class JarInstanceManager extends FileBasedInstanceManager<JarInstanceDesc
 		return m_executor;
 	}
 	
-	@Override
-	protected JarInstanceDescriptor buildDescriptor(String id, AssetAdministrationShell aas,
-													Object arguments) {
-		if ( arguments instanceof JarExecutionArguments jargs ) {
-			return new JarInstanceDescriptor(id, aas.getId(), aas.getIdShort(), jargs);
-		}
-		else {
-			throw new IllegalArgumentException("Invalid ExecutionArguments type: type=" + arguments.getClass());
-		}
-	}
-
-	@Override
-	protected JarInstanceDescriptor readDescriptor(File descFile) throws MDTInstanceManagerException {
+	public JarExecutionArguments parseExecutionArguments(String argsJson) {
 		try {
-			return m_mapper.readValue(descFile, JarInstanceDescriptor.class);
+			return m_mapper.readValue(argsJson, JarExecutionArguments.class);
 		}
-		catch ( Exception e ) {
-			throw new MDTInstanceManagerException("Failed to read InstanceDescriptor file: " + descFile
-													+ ", cause=" + e);
+		catch ( JsonProcessingException e ) {
+			throw new InternalException("Failed to parse JarExecutionArguments string, cause=" + e);
+		}
+	}
+	
+	public String toExecutionArgumentsString(JarExecutionArguments args) {
+		try {
+			return m_mapper.writeValueAsString(args);
+		}
+		catch ( JsonProcessingException e ) {
+			throw new InternalException("Failed to write JarExecutionArguments string, cause=" + e);
 		}
 	}
 	
 	@Override
-	protected JarInstance toInstance(JarInstanceDescriptor descriptor) {
-		if ( descriptor instanceof JarInstanceDescriptor jdesc ) {
-			return new JarInstance(this, jdesc);
-		}
-		else {
-			throw new MDTInstanceManagerException("Invalid JarInstanceDescriptor: desc=" + descriptor);
-		}
+	protected JarInstance toInstance(InstanceDescriptor descriptor) throws MDTInstanceManagerException {
+		return new JarInstance(this, descriptor);
 	}
 	
 	@Override
-	protected JarInstanceDescriptor buildInstance(File instanceDir, JarInstanceDescriptor descriptor) {
-		if ( descriptor instanceof JarInstanceDescriptor jdesc ) {
-			try {
-				File jarFile = new File(instanceDir, "fa3st-repository.jar");
-				File modelFile = new File(instanceDir, "model.json");
-				File confFile = new File(instanceDir, "conf.json");
-				
-				JarExecutionArguments args = jdesc.getArguments();
-				copyFileIfNotSame(new File(args.getJarFile()), jarFile);
-				copyFileIfNotSame(new File(args.getModelFile()), modelFile);
-				copyFileIfNotSame(new File(args.getConfigFile()), confFile);
-				args = JarExecutionArguments.builder()
-											.jarFile(jarFile.getAbsolutePath())
-											.modelFile(modelFile.getAbsolutePath())
-											.configFile(confFile.getAbsolutePath())
-											.build();
-				jdesc.setArguments(args);
-				
-				return jdesc;
-			}
-			catch ( IOException e ) {
-				throw new MDTInstanceManagerException("Failed to create MDTInstance: args="
-														+ descriptor + ", cause=" + e);
-			}
+	protected InstanceDescriptor initializeInstance(InstanceDescriptor desc) {
+		File instanceDir = getInstanceWorkspaceDir(desc.getId());
+		try {
+			File jarFile = new File(instanceDir, "fa3st-repository.jar");
+			Files.createParentDirs(jarFile);
+			
+			File modelFile = new File(instanceDir, "model.json");
+			File confFile = new File(instanceDir, "conf.json");
+			
+			JarExecutionArguments jargs = m_mapper.readValue(desc.getArguments(),
+																	JarExecutionArguments.class);
+			copyFileIfNotSame(new File(jargs.getJarFile()), jarFile);
+			copyFileIfNotSame(new File(jargs.getModelFile()), modelFile);
+			copyFileIfNotSame(new File(jargs.getConfigFile()), confFile);
+			jargs = JarExecutionArguments.builder()
+										.jarFile("fa3st-repository.jar")
+										.modelFile("model.json")
+										.configFile("conf.json")
+										.build();
+			desc.setArguments(m_mapper.writeValueAsString(jargs));
+			
+			return desc;
 		}
-		else {
-			throw new MDTInstanceManagerException("Invalid JarInstanceDescriptor: desc=" + descriptor);
+		catch ( IOException e ) {
+			throw new MDTInstanceManagerException("Failed to initialize MDTInstance: descriptor="
+													+ desc + ", cause=" + e);
 		}
 	}
 	
@@ -114,36 +111,31 @@ public class JarInstanceManager extends FileBasedInstanceManager<JarInstanceDesc
 	private final JarExecutionListener m_execListener = new JarExecutionListener() {
 		@Override
 		public void stausChanged(String id, MDTInstanceStatus status, int repoPort) {
-			try {
-				JarInstance instance = (JarInstance)getInstance(id);
-				switch ( status ) {
-					case RUNNING:
-						String ep = toServiceEndpoint(repoPort);
-						setServiceEndpoint(instance.getAASId(), ep);
-						if ( s_logger.isInfoEnabled() ) {
-							s_logger.info("JarInstance is now running: " + instance);
-						}
-						break;
-					case STOPPED:
-						unsetServiceEndpoint(instance.getAASId());
-						if ( s_logger.isInfoEnabled() ) {
-							s_logger.info("JarInstance is now stopped: " + instance);
-						}
-						break;
-					case FAILED:
-						unsetServiceEndpoint(instance.getAASId());
-						if ( s_logger.isInfoEnabled() ) {
-							s_logger.info("JarInstance is now failed: " + instance);
-						}
-						break;
-					default: break;
-				}
+			switch ( status ) {
+				case RUNNING:
+					String svcEp = toServiceEndpoint(repoPort);
+					Globals.EVENT_BUS.post(InstanceStatusChangeEvent.RUNNING(id, svcEp));
+					break;
+				case STOPPED:
+					Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPED(id));
+					break;
+				case FAILED:
+					Globals.EVENT_BUS.post(InstanceStatusChangeEvent.FAILED(id));
+					break;
+				case STARTING:
+					Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STARTING(id));
+					break;
+				case STOPPING:
+					Globals.EVENT_BUS.post(InstanceStatusChangeEvent.STOPPING(id));
+					break;
+				default:
+					throw new InternalException("JarExecutor throws an unknown status: " + status);
 			}
-			catch ( Exception expected ) { }
 		}
 		
 		@Override
-		public void timeoutExpired() { }
+		public void timeoutExpired() {
+		}
 	};
 	
 	public static JarInstanceManagerBuilder builder() {

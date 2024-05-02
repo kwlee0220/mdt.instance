@@ -3,28 +3,27 @@ package mdt.instance.jar;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Preconditions;
-
 import utils.func.Tuple;
 
 import mdt.exector.jar.JarInstanceExecutor;
-import mdt.instance.FileBasedInstance;
+import mdt.instance.AbstractInstance;
+import mdt.instance.InstanceDescriptor;
+import mdt.model.instance.JarExecutionArguments;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManagerException;
 import mdt.model.instance.MDTInstanceStatus;
-import mdt.model.instance.StatusResult;
+import mdt.model.instance.StartResult;
 
 
 /**
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class JarInstance extends FileBasedInstance<JarInstanceDescriptor> implements MDTInstance {
+public class JarInstance extends AbstractInstance implements MDTInstance {
 	private static final Logger s_logger = LoggerFactory.getLogger(JarInstance.class);
 
-	JarInstance(JarInstanceManager manager, JarInstanceDescriptor desc) {
+	JarInstance(JarInstanceManager manager, InstanceDescriptor desc) {
 		super(manager, desc);
-		Preconditions.checkArgument(desc instanceof JarInstanceDescriptor);
 	}
 
 	@Override
@@ -39,33 +38,34 @@ public class JarInstance extends FileBasedInstance<JarInstanceDescriptor> implem
 	}
 
 	@Override
-	public StatusResult start() throws MDTInstanceManagerException {
-		JarInstanceDescriptor desc = getInstanceDescriptor();
+	public StartResult start() throws MDTInstanceManagerException {
+		InstanceDescriptor desc = getInstanceDescriptor();
+		
+		JarInstanceManager mgr = getInstanceManager();
+		JarExecutionArguments jargs = mgr.parseExecutionArguments(desc.getArguments());
 
-		Tuple<MDTInstanceStatus,Integer> result = getExecutor().start(getId(), getAASId(), desc.getArguments());
+		JarInstanceExecutor exector = getExecutor();
 		if ( s_logger.isInfoEnabled() ) {
-			s_logger.info("starting...: " + this + ", status=" + result._1);
+			s_logger.info("starting...: " + this);
 		}
-		return new StatusResult(getId(), result._1, toServiceEndpoint(result._2));
+		Tuple<MDTInstanceStatus,Integer> result = exector.start(getId(), getAASId(), jargs);
+		String svcEp = ( result._1 == MDTInstanceStatus.RUNNING ) ? toServiceEndpoint(result._2) : null;
+		return new StartResult(result._1, svcEp);
 	}
 
 	@Override
-	public StatusResult stop() {
-		Tuple<MDTInstanceStatus,Integer> result =  getExecutor().stop(getId());
-		if ( s_logger.isInfoEnabled() ) {
-			s_logger.info("stopping...: " + this + ", status=" + result._1);
-		}
-		return new StatusResult(getId(), result._1, toServiceEndpoint(result._2));
+	public void stop() {
+		getExecutor().stop(getId());
 	}
-
+	
 	@Override
 	protected void remove() {
-		// nothing to do!
+		stop();
 	}
 	
 	@Override
 	public String toString() {
-		return String.format("JarInstance(id=%s, aas_id=%s)", getId(), getAASId());
+		return String.format("JarInstance[id=%s, aas_id=%s, path=%s]", getId(), getAASId(), getWorkspaceDir());
 	}
 	
 	private JarInstanceExecutor getExecutor() {

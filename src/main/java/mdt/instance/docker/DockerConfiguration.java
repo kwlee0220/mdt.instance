@@ -11,4 +11,5 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class DockerConfiguration {
 	private String dockerHost;
+	private String mountPrefix;
 }

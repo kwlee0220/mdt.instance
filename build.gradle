@@ -23,6 +23,8 @@ ext {
 	aas4j_version = '1.0.0'
 	postgresql_version = '42.3.3'
 	spring_boot_version = '3.2.4'
+	h2_version = '2.2.224'
+	paho_version = '1.2.5'
 	
 	docker_client_version = '7.0.8'
 	jersey_version = '3.1.6'
@@ -48,7 +50,13 @@ dependencies {
 	testImplementation "org.springframework.boot:spring-boot-starter-test:${spring_boot_version}"
 	
 	// Postgresql
-	implementation "org.postgresql:postgresql:${postgresql_version}"
+//	implementation "org.postgresql:postgresql:${postgresql_version}"
+	// H2
+	implementation "com.h2database:h2:${h2_version}"
+	
+	// MQTT
+	implementation "org.eclipse.paho:org.eclipse.paho.client.mqttv3:${paho_version}"
+	
 	
 	// Docker Java Binding
 	implementation "org.mandas:docker-client:${docker_client_version}"

@@ -17,11 +17,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import utils.io.IOUtils;
+
 import mdt.MDTController;
 import mdt.model.instance.MDTInstance;
 import mdt.model.instance.MDTInstanceManager;
 import mdt.model.instance.MDTInstanceStatus;
-import mdt.model.instance.StatusResult;
+import mdt.model.instance.StartResult;
 
 
 /**
@@ -45,45 +47,94 @@ public class MDTInstanceController extends MDTController<MDTInstance> implements
     @GetMapping("/status/{id}")
     @ResponseStatus(HttpStatus.OK)
     public MDTInstanceStatus getStatus(@PathVariable("id") String id) {
-    	MDTInstance inst = m_instanceManager.getInstance(id);
-    	return inst.getStatus();
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+    		return inst.getStatus();
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
     }
 
     @GetMapping("/endpoint/{id}")
     @ResponseStatus(HttpStatus.OK)
     public String gerServiceEndpoint(@PathVariable("id") String id) {
-    	MDTInstance inst = m_instanceManager.getInstance(id);
-    	return inst.getServiceEndpoint();
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+    		return inst.getServiceEndpoint();
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
+    }
+
+    @GetMapping("/arguments/{id}")
+    @ResponseStatus(HttpStatus.OK)
+    public String getExecutionArguments(@PathVariable("id") String id) {
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+    		return inst.getExecutionArguments();
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
     }
 
     @PostMapping({"/start/{id}"})
     @ResponseStatus(HttpStatus.CREATED)
-    public StatusResult start(@PathVariable("id") String id) throws SerializationException {
-    	MDTInstance inst = m_instanceManager.getInstance(id);
-    	return inst.start();
+    public StartResult start(@PathVariable("id") String id) throws SerializationException {
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+        	return inst.start();
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
     }
 
     @PostMapping({"/stop/{id}"})
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public StatusResult stop(@PathVariable("id") String id) throws SerializationException {
-    	MDTInstance inst = m_instanceManager.getInstance(id);
-    	return inst.stop();
+    public void stop(@PathVariable("id") String id) throws SerializationException {
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+        	inst.stop();
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
     }
 
     @GetMapping("/aas_descriptor/{id}")
     @ResponseStatus(HttpStatus.OK)
     public String getAssetAdministrationShellDescriptor(@PathVariable("id") String id)
     	throws SerializationException {
-    	MDTInstance inst = m_instanceManager.getInstance(id);
-    	AssetAdministrationShellDescriptor desc = inst.getAASDescriptor();
-		return s_ser.write(desc);
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+        	AssetAdministrationShellDescriptor desc = inst.getAssetAdministrationShellDescriptor();
+    		return s_ser.write(desc);
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
     }
 
     @GetMapping("/submodel_descriptors/{id}")
     @ResponseStatus(HttpStatus.OK)
     public String getAllSubmodelDescriptors(@PathVariable("id") String id) throws SerializationException {
-    	MDTInstance inst = m_instanceManager.getInstance(id);
-    	List<SubmodelDescriptor> descList = inst.getAllSubmodelDescriptors();
-		return s_ser.write(descList);
+    	MDTInstance inst = null;
+    	try {
+    		inst = m_instanceManager.getInstance(id);
+        	List<SubmodelDescriptor> descList = inst.getAllSubmodelDescriptors();
+    		return s_ser.write(descList);
+    	}
+    	finally {
+        	IOUtils.closeQuietly(inst);
+    	}
     }
 }

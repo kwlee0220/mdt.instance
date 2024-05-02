@@ -1,76 +1,65 @@
 package mdt.instance.k8s;
 
-import java.io.File;
-
-import org.eclipse.digitaltwin.aas4j.v3.model.AssetAdministrationShell;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+
+import mdt.instance.AbstractInstanceManager;
 import mdt.instance.AbstractMDTInstanceManagerBuilder;
-import mdt.instance.FileBasedInstanceManager;
+import mdt.instance.InstanceDescriptor;
+import mdt.model.InternalException;
 import mdt.model.instance.KubernetesExecutionArguments;
 import mdt.model.instance.MDTInstanceManagerException;
+
 
 /**
  *
  * @author Kang-Woo Lee (ETRI)
  */
-public class KubernetesInstanceManager extends FileBasedInstanceManager<KubernetesInstanceDescriptor> {
+public class KubernetesInstanceManager extends AbstractInstanceManager {
 	private static final Logger s_logger = LoggerFactory.getLogger(KubernetesInstanceManager.class);
 	
-	private final KubernetesRemote m_k8s;
+	private final JsonMapper m_mapper;
 	
 	public KubernetesInstanceManager(KubernetesInstanceManagerBuilder builder) {
 		super(builder);
 		
+		m_mapper = JsonMapper.builder().build();
 		setLogger(s_logger);
-		m_k8s = KubernetesRemote.connect();
 	}
 	
-	@Override
-	protected KubernetesInstanceDescriptor buildDescriptor(String id, AssetAdministrationShell aas,
-															Object arguments) {
-		if ( arguments instanceof KubernetesExecutionArguments jargs ) {
-			return new KubernetesInstanceDescriptor(id, aas.getId(), aas.getIdShort(), jargs);
-		}
-		else {
-			throw new IllegalArgumentException("Invalid ExecutionArguments type: type=" + arguments.getClass());
-		}
-	}
-
-	@Override
-	protected KubernetesInstanceDescriptor readDescriptor(File descFile) throws MDTInstanceManagerException {
+	public KubernetesExecutionArguments parseExecutionArguments(String argsJson) {
 		try {
-			return m_mapper.readValue(descFile, KubernetesInstanceDescriptor.class);
+			return m_mapper.readValue(argsJson, KubernetesExecutionArguments.class);
 		}
-		catch ( Exception e ) {
-			throw new MDTInstanceManagerException("Failed to read InstanceDescriptor file: " + descFile
-													+ ", cause=" + e);
+		catch ( JsonProcessingException e ) {
+			throw new InternalException("Failed to parse KubernetesExecutionArguments string, cause=" + e);
+		}
+	}
+	
+	public String toExecutionArgumentsString(KubernetesExecutionArguments args) {
+		try {
+			return m_mapper.writeValueAsString(args);
+		}
+		catch ( JsonProcessingException e ) {
+			throw new InternalException("Failed to write KubernetesExecutionArguments string, cause=" + e);
 		}
 	}
 	
 	@Override
-	protected KubernetesInstance toInstance(KubernetesInstanceDescriptor descriptor) {
-		if ( descriptor instanceof KubernetesInstanceDescriptor jdesc ) {
-			return new KubernetesInstance(this, jdesc);
-		}
-		else {
-			throw new MDTInstanceManagerException("Invalid KubernetesInstanceDescriptor: desc=" + descriptor);
-		}
+	protected KubernetesInstance toInstance(InstanceDescriptor descriptor) throws MDTInstanceManagerException {
+		return new KubernetesInstance(this, descriptor);
 	}
 	
 	@Override
-	protected KubernetesInstanceDescriptor buildInstance(File instanceDir, KubernetesInstanceDescriptor descriptor) {
-		if ( descriptor instanceof KubernetesInstanceDescriptor kdesc ) {
-			return kdesc;
-		}
-		else {
-			throw new MDTInstanceManagerException("Invalid JarInstanceDescriptor: desc=" + descriptor);
-		}
+	protected InstanceDescriptor initializeInstance(InstanceDescriptor desc) {
+		return desc;
 	}
 
-	KubernetesRemote getKubernetesRemote() {
-		return m_k8s;
+	KubernetesRemote newKubernetesRemote() {
+		return KubernetesRemote.connect();
 	}
 
 	public static KubernetesInstanceManagerBuilder builder() {

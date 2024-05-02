@@ -18,18 +18,28 @@ logging:
       console: "%d{yyyy-MM-dd HH:mm:ss} | %-5level | %-40.40logger{39} | %msg%n"
 
 
-repository:
+rootDir: D:\Dropbox\Temp
+
+registry:
    aas:
-      workspaceDir: D:/Dropbox/Temp/mdt-registry/shells
+      workspaceDir: ${rootDir}/mdt-registry/shells
       cacheSize: 32
    submodel:
-      workspaceDir: D:/Dropbox/Temp/mdt-registry/submodels
+      workspaceDir: ${rootDir}/mdt-registry/submodels
       cacheSize: 256
+      
+repository:
+   workspaceDir: ${rootDir}/mdt-repository
+   endpoint: http://localhost:${server.port}/api/v3.0
 
 instance-manager:
-   type: docker
-   repositoryEndpointFormat: https://192.168.0.7:%d/api/v3.0
-   workspaceDir: D:/Dropbox/Temp/mdt-instances
+   type: jar
+   repositoryEndpointFormat: https://localhost:%d/api/v3.0
+   workspaceDir: ${rootDir}/mdt-instances
+   jdbc:
+      url: jdbc:h2:${instance-manager.workspaceDir}/descriptors
+      user: sa
+      password: ""
    
    executor:
       workspaceDir: ${instance-manager.workspaceDir}
@@ -38,3 +48,4 @@ instance-manager:
       
    docker:
       dockerHost: http://localhost:2375
+      mountPrefix: ${rootDir}/mdt-instances
